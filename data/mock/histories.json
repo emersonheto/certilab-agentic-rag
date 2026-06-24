@@ -1,0 +1,30 @@
+[
+  {
+    "id": 1,
+    "certificate_id": 1,
+    "event": "created",
+    "occurred_at": "2025-01-17",
+    "note": "Registro creado desde datos de demostración."
+  },
+  {
+    "id": 2,
+    "certificate_id": 1,
+    "event": "emitted",
+    "occurred_at": "2025-01-18",
+    "note": "Certificado emitido y disponible para el cliente demo."
+  },
+  {
+    "id": 3,
+    "certificate_id": 2,
+    "event": "emitted",
+    "occurred_at": "2025-02-05",
+    "note": "Certificado emitido con observación técnica controlada."
+  },
+  {
+    "id": 4,
+    "certificate_id": 3,
+    "event": "review_requested",
+    "occurred_at": "2025-03-10",
+    "note": "Pendiente de revisión documental interna."
+  }
+]

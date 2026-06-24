@@ -1,0 +1,5 @@
+Certificado de calibración demo CERT-2025-001.
+
+Equipo: balanza analítica utilizada en control de masa. El procedimiento incluyó estabilización térmica, verificación visual, limpieza superficial y mediciones repetidas con patrones trazables. La incertidumbre expandida se calculó con factor de cobertura k=2. El resultado quedó dentro de tolerancias definidas para el proceso del cliente demo.
+
+Observación técnica: se recomienda conservar el equipo en superficie nivelada, evitar corrientes de aire y repetir la calibración según el intervalo definido por el sistema de calidad del cliente.

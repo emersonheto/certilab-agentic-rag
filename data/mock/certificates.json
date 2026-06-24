@@ -1,0 +1,32 @@
+[
+  {
+    "id": 1,
+    "code": "CERT-2025-001",
+    "customer_id": 101,
+    "status": "emitido",
+    "emitted_at": "2025-01-18",
+    "technician_id": 9001,
+    "equipment": "Balanza analítica demo",
+    "pdf_path": "data/pdf_text/CERT-2025-001.txt"
+  },
+  {
+    "id": 2,
+    "code": "CERT-2025-002",
+    "customer_id": 202,
+    "status": "emitido",
+    "emitted_at": "2025-02-05",
+    "technician_id": 9002,
+    "equipment": "Termómetro digital demo",
+    "pdf_path": "data/pdf_text/CERT-2025-002.txt"
+  },
+  {
+    "id": 3,
+    "code": "CERT-2025-003",
+    "customer_id": 101,
+    "status": "pendiente_revision",
+    "emitted_at": "2025-03-10",
+    "technician_id": 9001,
+    "equipment": "Manómetro demo",
+    "pdf_path": "data/pdf_text/CERT-2025-003.txt"
+  }
+]

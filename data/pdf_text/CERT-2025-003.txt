@@ -1,0 +1,3 @@
+Certificado mock CERT-2025-003 para manómetro demo.
+
+Documento pendiente de revisión. Incluye verificación de presión, inspección visual y observaciones internas simuladas para pruebas de aislamiento por cliente.

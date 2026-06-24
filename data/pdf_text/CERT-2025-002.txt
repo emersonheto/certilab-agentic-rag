@@ -1,0 +1,5 @@
+Certificado de calibración demo CERT-2025-002.
+
+Equipo: termómetro digital para monitoreo de temperatura. El procedimiento comparó lecturas en puntos de referencia controlados y registró desviaciones aceptables para uso en ambiente clínico demo. Se verificó integridad física de la sonda, respuesta de lectura y estabilidad en los puntos evaluados.
+
+Observación técnica: mantener la sonda protegida, documentar golpes o exposición a humedad y solicitar recalibración si el instrumento presenta lecturas inestables.
