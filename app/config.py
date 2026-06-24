@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     demo_client_202_token: str | None = None
     chainlit_demo_token: str | None = None
 
+    # Real-mode API key authentication. Required only when APP_MODE=real;
+    # the X-API-Key header is validated against these operator-issued secrets.
+    api_key_admin: str | None = None
+    api_key_technician: str | None = None
+    api_key_client_101: str | None = None
+    api_key_client_202: str | None = None
+
     openai_api_key: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"
     openai_chat_model: str = "gpt-4o-mini"

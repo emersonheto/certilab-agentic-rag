@@ -27,11 +27,44 @@ El repositorio corre en **modo mock por defecto**. El modo real es opcional y so
 
 Si necesitás usar otra ubicación, exportá `CERTILAB_RAG_ENV_FILE=/ruta/operator.env`. Las pruebas usan `CERTILAB_RAG_DISABLE_DOTENV=true` para no cargar `.env` del proyecto ni archivos externos.
 
+## Autenticación con API key (modo real)
+
+El modo mock autentica con el header `X-Demo-Token` y los tokens `DEMO_*` (solo para desarrollo local). En **modo real** la API autentica cada llamada con el header `X-API-Key`, validado contra secretos provistos por el operador en variables de entorno:
+
+```env
+APP_MODE=real
+API_KEY_ADMIN=<secreto-admin>
+API_KEY_TECHNICIAN=<secreto-tecnico>
+API_KEY_CLIENT_101=<secreto-cliente-101>
+API_KEY_CLIENT_202=<secreto-cliente-202>
+```
+
+Cada variable mapea a un `Principal` con rol y `customer_id` predefinidos:
+
+| Variable | Rol | customer_id | user_id |
+|---|---|---|---|
+| `API_KEY_ADMIN` | admin | — | 1 |
+| `API_KEY_TECHNICIAN` | technician | — | 2 |
+| `API_KEY_CLIENT_101` | client | 101 | 1010 |
+| `API_KEY_CLIENT_202` | client | 202 | 2020 |
+
+Ejemplo de llamada autenticada:
+
+```bash
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY_CLIENT_101" \
+  -d '{"question": "¿Cuántos certificados tengo?"}'
+```
+
+Una key ausente o inválida devuelve `401 Unauthorized`. La selección del adaptador depende únicamente de `APP_MODE`: `mock` → `X-Demo-Token`, `real` → `X-API-Key`. Las keys se almacenan en el entorno del operador (no en la base de datos) para mantener el servicio standable sin MySQL; la integración con Laravel/JWT queda diferida y es intercambiable sin tocar los puntos de uso.
+
 ## Mapeo de variables de entorno
 
 | Propósito | Variable RAG preferida | Alias compatibles con Laravel |
 |---|---|---|
 | Modo de aplicación | `APP_MODE=mock\|real` | — |
+| API key de autenticación (modo real) | `API_KEY_ADMIN`, `API_KEY_TECHNICIAN`, `API_KEY_CLIENT_101`, `API_KEY_CLIENT_202` | — |
 | API key de OpenAI | `OPENAI_API_KEY` | — |
 | Modelo de embeddings | `OPENAI_EMBEDDING_MODEL` | — |
 | Modelo de chat | `OPENAI_CHAT_MODEL` | — |

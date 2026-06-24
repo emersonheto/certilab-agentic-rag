@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 
 from app.config import Settings
 from app.config import get_settings
@@ -8,7 +8,24 @@ from app.graph import RagPipeline, build_rag_pipeline
 from app.observability import configure_observability
 from app.schemas import AskRequest, AskResponse, HealthResponse
 from app.security.access_control import AccessDeniedError, Principal
+from app.security.api_key_auth import get_api_key_principal
 from app.security.demo_auth import get_demo_principal
+
+
+async def get_principal(
+    settings: Annotated[Settings, Depends(get_settings)],
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    x_demo_token: Annotated[str | None, Header(alias="X-Demo-Token")] = None,
+) -> Principal:
+    """Select the auth adapter from APP_MODE.
+
+    Mock mode keeps the demo adapter (and the 84 existing token-based tests),
+    while real mode authenticates callers with the operator-issued X-API-Key.
+    """
+
+    if settings.app_mode == "real":
+        return await get_api_key_principal(x_api_key)
+    return await get_demo_principal(x_demo_token)
 
 
 def create_app() -> FastAPI:
@@ -21,7 +38,7 @@ def create_app() -> FastAPI:
         return HealthResponse(status="ok", service=settings.app_name, environment=settings.environment)
 
     @app.post("/ask", response_model=AskResponse, tags=["rag"])
-    async def ask(payload: AskRequest, principal: Annotated[Principal, Depends(get_demo_principal)]) -> AskResponse:
+    async def ask(payload: AskRequest, principal: Annotated[Principal, Depends(get_principal)]) -> AskResponse:
         try:
             return get_pipeline(settings).ask(payload.question, principal)
         except AccessDeniedError as exc:
