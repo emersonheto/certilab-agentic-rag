@@ -15,7 +15,10 @@ REDACTED_SECRET = "[REDACTED_SECRET]"
 REDACTED_LOCATION = "[REDACTED_LOCATION]"
 REDACTED_CUSTOMER = "[REDACTED_CUSTOMER]"
 
-CERTIFICATE_CODE_PATTERN = re.compile(r"\bCERT-\d{4}-\d{3,}\b", re.IGNORECASE)
+CERTIFICATE_CODE_PATTERN = re.compile(
+    r"\b(?:CERT-\d{4}-\d{3,}|[A-Z]{1,6}-\d{3,4}[.-]\d{2}[.-]\d{1,3})\b",
+    re.IGNORECASE,
+)
 URL_PATTERN = re.compile(r"\b(?:https?|s3|mysql|postgres(?:ql)?|redis|mongodb)://\S+", re.IGNORECASE)
 DSN_PATTERN = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s]+", re.IGNORECASE)
 SECRET_ASSIGNMENT_PATTERN = re.compile(
@@ -26,7 +29,7 @@ OPENAI_KEY_PATTERN = re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b")
 BEARER_TOKEN_PATTERN = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.IGNORECASE)
 STORAGE_PATH_PATTERN = re.compile(r"(?:\bdata/|\bs3://|/[^\s]+|[A-Za-z]:\\)[^\s,;]*", re.IGNORECASE)
 CUSTOMER_IDENTIFIER_PATTERN = re.compile(
-    r"\b(?:customer|cliente|client|tenant|empresa)\s*[:#-]?\s*[A-Za-z0-9_-]+",
+    r"\b(?:customer|cliente|client|tenant|empresa)\s*[:#-]?\s*\d+\b",
     re.IGNORECASE,
 )
 

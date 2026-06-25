@@ -31,6 +31,15 @@ SEMANTIC_TERMS = {
     "observacion",
     "pdf",
     "informe",
+    "muestras",
+    "análisis",
+    "analisis",
+    "laboratorio",
+    "agua",
+    "ensayo",
+    "método",
+    "metodo",
+    "resultado",
 }
 WEB_SEARCH_TERMS = {
     "actualidad",
@@ -42,6 +51,16 @@ WEB_SEARCH_TERMS = {
     "público",
     "tavily",
     "web",
+    "norma",
+    "normas",
+    "iso",
+    "inacal",
+    "regulación",
+    "regulacion",
+    "reglamento",
+    "resolución",
+    "resolucion",
+    "decreto",
 }
 
 

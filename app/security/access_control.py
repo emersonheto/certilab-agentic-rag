@@ -24,7 +24,13 @@ class AccessScope:
 
     @property
     def is_global(self) -> bool:
-        return self.role in {Role.ADMIN, Role.TECHNICIAN}
+        """Return True when the scope covers all customers.
+
+        A scope with an explicit ``customer_id`` is intentionally narrowed
+        (e.g. from ``extract_customer_id``) and MUST NOT be treated as global,
+        even for ADMIN/TECHNICIAN roles.
+        """
+        return self.role in {Role.ADMIN, Role.TECHNICIAN} and self.customer_id is None
 
 
 def build_scope(role: str, customer_id: int | None, user_id: int | None = None) -> AccessScope:

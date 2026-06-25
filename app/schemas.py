@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 RoleName = Literal["admin", "technician", "client"]
 
+RouteName = Literal["structured", "semantic", "combined", "web_search", "off_topic"]
+
 
 class AskRequest(BaseModel):
     """Public question payload.
@@ -30,7 +32,7 @@ class Source(BaseModel):
 
 class AskResponse(BaseModel):
     answer: str
-    route: Literal["structured", "semantic", "combined", "web_search"]
+    route: RouteName
     sources: list[Source]
 
 
@@ -38,3 +40,17 @@ class HealthResponse(BaseModel):
     status: Literal["ok"]
     service: str
     environment: str
+
+
+class ReindexResponse(BaseModel):
+    status: Literal["ok"]
+    indexed: int
+    skipped: int
+    duration_ms: float
+    note: str | None = None
+
+
+class EvaluateResponse(BaseModel):
+    status: Literal["ok"]
+    evaluated: int
+    experiment_id: str = ""
