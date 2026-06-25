@@ -184,7 +184,8 @@ def test_qdrant_index_stores_customer_id_in_payload(qdrant_index: tuple[Any, Fak
 
     index.upsert([chunk])
 
-    stored = client._collections["test-collection"]["chunk-101"]
+    stored_uuid = index._chunk_to_uuid["chunk-101"]
+    stored = client._collections["test-collection"][stored_uuid]
     assert stored.payload["customer_id"] == 101
     assert stored.payload["code"] == "CERT-2025-001"
 

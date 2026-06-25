@@ -57,8 +57,7 @@ class Settings(BaseSettings):
     # the X-API-Key header is validated against these operator-issued secrets.
     api_key_admin: str | None = None
     api_key_technician: str | None = None
-    api_key_client_101: str | None = None
-    api_key_client_202: str | None = None
+    api_key_client: str | None = None
 
     openai_api_key: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"

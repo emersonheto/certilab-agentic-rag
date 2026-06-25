@@ -15,16 +15,18 @@ from app.security.demo_auth import get_demo_principal
 async def get_principal(
     settings: Annotated[Settings, Depends(get_settings)],
     x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    x_customer_id: Annotated[int | None, Header(alias="X-Customer-Id")] = None,
     x_demo_token: Annotated[str | None, Header(alias="X-Demo-Token")] = None,
 ) -> Principal:
     """Select the auth adapter from APP_MODE.
 
     Mock mode keeps the demo adapter (and the 84 existing token-based tests),
     while real mode authenticates callers with the operator-issued X-API-Key.
+    Clients in real mode also send X-Customer-Id for tenant scope.
     """
 
     if settings.app_mode == "real":
-        return await get_api_key_principal(x_api_key)
+        return await get_api_key_principal(x_api_key, x_customer_id, settings)
     return await get_demo_principal(x_demo_token)
 
 

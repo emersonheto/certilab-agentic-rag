@@ -19,8 +19,7 @@ from app.security.api_key_auth import principal_from_api_key
 
 API_KEY_ADMIN = "admin-secret"
 API_KEY_TECHNICIAN = "tech-secret"
-API_KEY_CLIENT_101 = "client-101-secret"
-API_KEY_CLIENT_202 = "client-202-secret"
+API_KEY_CLIENT = "client-secret"
 
 
 def _real_settings() -> Settings:
@@ -28,8 +27,7 @@ def _real_settings() -> Settings:
         app_mode="real",
         api_key_admin=API_KEY_ADMIN,
         api_key_technician=API_KEY_TECHNICIAN,
-        api_key_client_101=API_KEY_CLIENT_101,
-        api_key_client_202=API_KEY_CLIENT_202,
+        api_key_client=API_KEY_CLIENT,
     )
 
 
@@ -38,8 +36,7 @@ def real_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setenv("APP_MODE", "real")
     monkeypatch.setenv("API_KEY_ADMIN", API_KEY_ADMIN)
     monkeypatch.setenv("API_KEY_TECHNICIAN", API_KEY_TECHNICIAN)
-    monkeypatch.setenv("API_KEY_CLIENT_101", API_KEY_CLIENT_101)
-    monkeypatch.setenv("API_KEY_CLIENT_202", API_KEY_CLIENT_202)
+    monkeypatch.setenv("API_KEY_CLIENT", API_KEY_CLIENT)
 
     from app.main import create_app
 
@@ -58,17 +55,24 @@ def demo_client_101_token() -> str:
     return cast(str, os.environ["DEMO_CLIENT_101_TOKEN"])
 
 
-@pytest.mark.parametrize(
-    ("api_key", "expected"),
-    [
-        (API_KEY_ADMIN, Principal(role=Role.ADMIN, customer_id=None, user_id=1)),
-        (API_KEY_TECHNICIAN, Principal(role=Role.TECHNICIAN, customer_id=None, user_id=2)),
-        (API_KEY_CLIENT_101, Principal(role=Role.CLIENT, customer_id=101, user_id=1010)),
-        (API_KEY_CLIENT_202, Principal(role=Role.CLIENT, customer_id=202, user_id=2020)),
-    ],
-)
-def test_valid_api_key_derives_principal(api_key: str, expected: Principal) -> None:
-    assert principal_from_api_key(api_key, _real_settings()) == expected
+def test_admin_key_derives_principal() -> None:
+    p = principal_from_api_key(API_KEY_ADMIN, _real_settings())
+    assert p == Principal(role=Role.ADMIN, customer_id=None, user_id=1)
+
+
+def test_technician_key_derives_principal() -> None:
+    p = principal_from_api_key(API_KEY_TECHNICIAN, _real_settings())
+    assert p == Principal(role=Role.TECHNICIAN, customer_id=None, user_id=2)
+
+
+def test_client_key_with_customer_id_derives_principal() -> None:
+    p = principal_from_api_key(API_KEY_CLIENT, _real_settings(), customer_id=3)
+    assert p == Principal(role=Role.CLIENT, customer_id=3, user_id=3)
+
+
+def test_client_key_without_customer_id_raises() -> None:
+    with pytest.raises(ValueError, match="customer_id"):
+        principal_from_api_key(API_KEY_CLIENT, _real_settings())
 
 
 def test_invalid_api_key_rejected_by_adapter() -> None:
@@ -88,6 +92,15 @@ def test_real_mode_rejects_invalid_api_key(real_client: TestClient) -> None:
         json={"question": "¿Cuántos certificados hay?"},
     )
     assert response.status_code == 401
+
+
+def test_real_mode_client_without_customer_id_returns_400(real_client: TestClient) -> None:
+    response = real_client.post(
+        "/ask",
+        headers={"X-API-Key": API_KEY_CLIENT},
+        json={"question": "¿Cuántos certificados hay?"},
+    )
+    assert response.status_code == 400
 
 
 def test_real_mode_ignores_demo_token(real_client: TestClient, demo_client_101_token: str) -> None:

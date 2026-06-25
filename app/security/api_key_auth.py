@@ -9,44 +9,52 @@ from app.security.access_control import Principal
 
 async def get_api_key_principal(
     x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    x_customer_id: Annotated[int | None, Header(alias="X-Customer-Id")] = None,
+    settings: Settings = None,
 ) -> Principal:
-    """Resolve a principal from an operator-issued API key (real mode).
+    """Resolve a principal from a role-based API key (real mode).
 
-    Keys are provisioned as operator environment variables (never in the
-    database) so the service stays standable without MySQL. This adapter is the
-    real-mode counterpart of the demo adapter and can be swapped to a DB- or
-    Laravel-backed store later without changing call sites.
+    One key per role (admin, technician, client). Clients must also send
+    X-Customer-Id to declare which tenant they belong to.
     """
+
+    if settings is None:
+        settings = get_settings()
 
     if x_api_key is None:
         raise _unauthorized()
-    principal = _api_key_principals().get(x_api_key)
-    if principal is None:
-        raise _unauthorized()
-    return principal
+
+    if x_api_key == settings.api_key_admin:
+        return Principal(role=Role.ADMIN, customer_id=None, user_id=1)
+
+    if x_api_key == settings.api_key_technician:
+        return Principal(role=Role.TECHNICIAN, customer_id=None, user_id=2)
+
+    if x_api_key == settings.api_key_client:
+        if x_customer_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="X-Customer-Id header is required for client role.",
+            )
+        return Principal(role=Role.CLIENT, customer_id=x_customer_id, user_id=x_customer_id)
+
+    raise _unauthorized()
 
 
-def principal_from_api_key(api_key: str, settings: Settings) -> Principal:
+def principal_from_api_key(
+    api_key: str, settings: Settings, customer_id: int | None = None
+) -> Principal:
     """Resolve an API-key principal for non-HTTP adapters such as Chainlit."""
 
-    principal = _api_key_principals_from_settings(settings).get(api_key)
-    if principal is None:
-        raise ValueError("Invalid API key.")
-    return principal
-
-
-def _api_key_principals() -> dict[str, Principal]:
-    return _api_key_principals_from_settings(get_settings())
-
-
-def _api_key_principals_from_settings(settings: Settings) -> dict[str, Principal]:
-    configured: list[tuple[str | None, Principal]] = [
-        (settings.api_key_admin, Principal(role=Role.ADMIN, customer_id=None, user_id=1)),
-        (settings.api_key_technician, Principal(role=Role.TECHNICIAN, customer_id=None, user_id=2)),
-        (settings.api_key_client_101, Principal(role=Role.CLIENT, customer_id=101, user_id=1010)),
-        (settings.api_key_client_202, Principal(role=Role.CLIENT, customer_id=202, user_id=2020)),
-    ]
-    return {api_key: principal for api_key, principal in configured if api_key}
+    if api_key == settings.api_key_admin:
+        return Principal(role=Role.ADMIN, customer_id=None, user_id=1)
+    if api_key == settings.api_key_technician:
+        return Principal(role=Role.TECHNICIAN, customer_id=None, user_id=2)
+    if api_key == settings.api_key_client:
+        if customer_id is None:
+            raise ValueError("customer_id is required for client API key.")
+        return Principal(role=Role.CLIENT, customer_id=customer_id, user_id=customer_id)
+    raise ValueError("Invalid API key.")
 
 
 def _unauthorized() -> HTTPException:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -112,6 +113,8 @@ class QdrantVectorIndex:
         self._embedding_provider = embedding_provider
         self._vector_size = vector_size
         self._distance = distance
+        self._chunk_to_uuid: dict[str, str] = {}
+        self._uuid_to_chunk: dict[str, str] = {}
         self._ensure_collection()
 
     def _ensure_collection(self) -> None:
@@ -131,6 +134,9 @@ class QdrantVectorIndex:
         points = []
         for chunk in chunks:
             vector = self._embedding_provider.embed(chunk.text)
+            point_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, chunk.id))
+            self._chunk_to_uuid[chunk.id] = point_uuid
+            self._uuid_to_chunk[point_uuid] = chunk.id
             payload = {
                 "customer_id": chunk.customer_id,
                 "code": chunk.certificate_code,
@@ -139,7 +145,7 @@ class QdrantVectorIndex:
                 "path": chunk.path,
                 "text": chunk.text,
             }
-            points.append(_make_point(chunk.id, vector, payload))
+            points.append(_make_point(point_uuid, vector, payload))
         self._client.upsert(collection_name=self._collection_name, points=points)
 
     def search(self, query: str, allowed_ids: set[str], top_k: int) -> list[tuple[str, float]]:
@@ -151,15 +157,21 @@ class QdrantVectorIndex:
 
         if not allowed_ids:
             return []
+        uuid_allowed = {self._chunk_to_uuid[cid] for cid in allowed_ids if cid in self._chunk_to_uuid}
+        if not uuid_allowed:
+            return []
         query_vector = self._embedding_provider.embed(query)
-        query_filter = _make_filter(allowed_ids)
+        query_filter = _make_filter(uuid_allowed)
         response = self._client.query_points(
             collection_name=self._collection_name,
             query=query_vector,
             query_filter=query_filter,
             limit=top_k,
         )
-        return [(str(point.id), float(point.score)) for point in response.points]
+        return [
+            (self._uuid_to_chunk.get(str(point.id), str(point.id)), float(point.score))
+            for point in response.points
+        ]
 
     @classmethod
     def from_settings(cls, settings: Any, embedding_provider: EmbeddingProviderProtocol) -> QdrantVectorIndex:
