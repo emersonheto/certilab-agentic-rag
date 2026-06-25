@@ -7,6 +7,18 @@ from app.config import Settings
 from app.domain.models import RetrievedSource
 from app.security.payload_sanitizer import summarize_sources_for_external_payload
 
+SYSTEM_PROMPT = (
+    "You are Certilab Assistant. A deterministic pipeline has retrieved verified "
+    "data and produced a draft answer. Reformulate it into a clear, natural "
+    "response in the user's language.\n\n"
+    "Rules:\n"
+    "- Trust the draft and context as ground truth. Do not second-guess.\n"
+    "- [REDACTED_CUSTOMER] and [REDACTED_CERTIFICATE_CODE] are sanitized placeholders — treat as normal.\n"
+    '- The "Scope" line in context tells you the customer and result count — use for a confident answer.\n'
+    "- Never invent data not present in the draft or context.\n"
+    'If the draft is empty: reply "No encontré información disponible para esa consulta."'
+)
+
 
 @dataclass(frozen=True)
 class OpenAIClientConfig:
@@ -72,7 +84,13 @@ class AnswerGenerator:
         config = OpenAIClientConfig.from_settings(settings)
         self._adapter = adapter or OpenAIClientAdapter(config)
 
-    def generate(self, question: str, sources: list[RetrievedSource], fallback_answer: str) -> str:
+    def generate(
+        self,
+        question: str,
+        sources: list[RetrievedSource],
+        fallback_answer: str,
+        scope_facts: str | None = None,
+    ) -> str:
         """Return an OpenAI answer only for explicitly configured real mode.
 
         The prompt uses sanitized snippets and source metadata only. If the SDK,
@@ -88,17 +106,14 @@ class AnswerGenerator:
                 messages=[
                     {
                         "role": "system",
-                        "content": (
-                            "Answer only from the provided Certilab context. "
-                            "If context is insufficient, say that authorized context was not found."
-                        ),
+                        "content": SYSTEM_PROMPT,
                     },
                     {
                         "role": "user",
-                        "content": _build_generation_prompt(question, sources, fallback_answer),
+                        "content": _build_generation_prompt(question, sources, fallback_answer, scope_facts),
                     },
                 ],
-                temperature=0.0,
+                temperature=self._settings.openai_temperature,
             )
         except Exception:
             return fallback_answer
@@ -106,10 +121,17 @@ class AnswerGenerator:
         return content.strip() if isinstance(content, str) and content.strip() else fallback_answer
 
 
-def _build_generation_prompt(question: str, sources: list[RetrievedSource], fallback_answer: str) -> str:
+def _build_generation_prompt(
+    question: str,
+    sources: list[RetrievedSource],
+    fallback_answer: str,
+    scope_facts: str | None = None,
+) -> str:
     safe_context = summarize_sources_for_external_payload(sources)
+    scope_section = f"Scope: {scope_facts}\n" if scope_facts else ""
     return (
-        f"Question length: {len(question)} characters\n"
-        f"Deterministic draft length: {len(fallback_answer)} characters\n"
+        f"Question: {question[:500]}\n"
+        f"Draft answer: {fallback_answer[:500]}\n"
+        f"{scope_section}"
         f"Authorized context:\n{safe_context or 'No authorized sources.'}"
     )
