@@ -7,7 +7,9 @@ from typing import Any, ParamSpec, Protocol, TypeVar
 from app.config import Settings
 
 
-SpanAttributeValue = str | int | float | bool | list[str] | list[int] | list[float] | list[bool]
+# Scalars only: lists are intentionally excluded to prevent payload/text
+# leakage into span attributes (PII-safe observability contract).
+SpanAttributeValue = str | int | float | bool
 SpanAttributes = Mapping[str, SpanAttributeValue]
 
 P = ParamSpec("P")
