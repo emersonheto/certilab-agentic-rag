@@ -80,6 +80,7 @@ def test_route_selection_includes_course_stack_paths() -> None:
 
 def test_langgraph_engine_falls_back_when_optional_dependency_is_unavailable(monkeypatch: Any) -> None:
     sys.modules.pop("app.graph_langgraph", None)
+    sys.modules.pop("app.pipeline.langgraph", None)
     original_import = builtins.__import__
 
     def fail_langgraph_pipeline_import(
@@ -89,7 +90,7 @@ def test_langgraph_engine_falls_back_when_optional_dependency_is_unavailable(mon
         fromlist: tuple[str, ...] = (),
         level: int = 0,
     ) -> ModuleType:
-        if name == "app.graph_langgraph":
+        if name in ("app.graph_langgraph", "app.pipeline.langgraph"):
             raise ImportError(name)
         return original_import(name, globals, locals, fromlist, level)
 
@@ -212,12 +213,86 @@ def test_openai_generator_uses_mocked_adapter_in_real_mode() -> None:
 
 
 def test_chainlit_module_import_does_not_require_chainlit_runtime(monkeypatch: Any) -> None:
+    class _FakeUserSession:
+        def get(self, key: str, default: Any = None) -> Any:
+            return default
+
+        def set(self, key: str, value: Any) -> None:
+            return None
+
+    class _FakeChatProfile:
+        def __init__(
+            self, name: str = "", markdown_description: str = "", icon: str = ""
+        ) -> None:
+            self.name = name
+            self.markdown_description = markdown_description
+            self.icon = icon
+
+    class _FakeAction:
+        def __init__(self, name: str = "", label: str = "", description: str = "") -> None:
+            self.name = name
+            self.label = label
+            self.description = description
+
+    class _FakeTask:
+        def __init__(self, title: str = "", status: object = None, forId: str | None = None) -> None:
+            self.title = title
+            self.status = status
+            self.forId = forId
+
+    class _FakeTaskList:
+        def __init__(self) -> None:
+            self.tasks: list[Any] = []
+
+        def add_task(self, task: Any) -> None:
+            self.tasks.append(task)
+
+        async def send(self) -> None: ...
+
+        async def remove(self) -> None: ...
+
+    class _FakeTaskStatus:
+        RUNNING = "running"
+        DONE = "done"
+        FAILED = "failed"
+        READY = "ready"
+
+    class _FakeStarter:
+        def __init__(self, label: str = "", message: str = "") -> None:
+            self.label = label
+            self.message = message
+
     class FakeChainlitModule:
+        Action = _FakeAction
         Message = FakeMessage
+        ChatProfile = _FakeChatProfile
+        Task = _FakeTask
+        TaskList = _FakeTaskList
+        TaskStatus = _FakeTaskStatus
+        Starter = _FakeStarter
+        user_session = _FakeUserSession()
+
+        @staticmethod
+        def set_chat_profiles(func: object) -> object:
+            return func
+
+        @staticmethod
+        def set_starters(func: object) -> object:
+            return func
+
+        @staticmethod
+        def on_chat_start(func: object) -> object:
+            return func
 
         @staticmethod
         def on_message(func: object) -> object:
             return func
+
+        @staticmethod
+        def action_callback(name: str) -> object:
+            def decorator(func: object) -> object:
+                return func
+            return decorator
 
     monkeypatch.setitem(sys.modules, "chainlit", FakeChainlitModule())
     sys.modules.pop("ui.chainlit_app", None)
@@ -227,24 +302,22 @@ def test_chainlit_module_import_does_not_require_chainlit_runtime(monkeypatch: A
     assert hasattr(module, "main")
 
 
-def test_chainlit_demo_prefers_explicit_or_client_token() -> None:
-    module = importlib.import_module("ui.chainlit_app")
+def test_chainlit_principal_mock_resolves_demo_tokens() -> None:
+    from ui.settings import _principal_mock
+
     settings = Settings(
         _env_file=None,
-        chainlit_demo_token="explicit-token",
         demo_admin_token="admin-token",
-        demo_client_101_token="client-token",
+        demo_client_101_token="client-101-token",
+        demo_client_202_token="client-202-token",
     )
 
-    assert module._default_demo_token(settings) == "explicit-token"
-
-    client_settings = Settings(_env_file=None, demo_admin_token="admin-token", demo_client_101_token="client-token")
-    assert module._default_demo_token(client_settings) == "client-token"
-
-    admin_only_settings = Settings(
-        _env_file=None,
-        demo_admin_token="admin-token",
-        demo_client_101_token=None,
-        demo_client_202_token=None,
+    assert _principal_mock("admin", settings) == Principal(
+        role=Role.ADMIN, customer_id=None, user_id=1
     )
-    assert module._default_demo_token(admin_only_settings) is None
+    assert _principal_mock("client_101", settings) == Principal(
+        role=Role.CLIENT, customer_id=101, user_id=1010
+    )
+    assert _principal_mock("client_202", settings) == Principal(
+        role=Role.CLIENT, customer_id=202, user_id=2020
+    )

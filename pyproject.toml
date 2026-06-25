@@ -5,6 +5,7 @@ description = "Deterministic MVP scaffold for a Certilab-style agentic RAG servi
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
+    "pdfplumber>=0.11.10",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
     "uvicorn[standard]>=0.30.0",
@@ -15,7 +16,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["app", "app.domain", "app.ingestion", "app.observability", "app.retrieval", "app.security", "app.tools", "ui"]
+packages = ["app", "app.domain", "app.ingestion", "app.observability", "app.pipeline", "app.retrieval", "app.security", "app.tools", "ui"]
 
 [project.optional-dependencies]
 dev = [
@@ -47,6 +48,8 @@ observability = [
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "requires_qdrant: requires a running Qdrant instance (QDRANT_URL)",
     "requires_mysql: requires a reachable MySQL instance (DB_HOST)",
