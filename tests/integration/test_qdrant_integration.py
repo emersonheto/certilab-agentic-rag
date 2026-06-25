@@ -68,8 +68,8 @@ def test_qdrant_upsert_and_search_round_trip(qdrant_available: str | None) -> No
     )
     index.upsert([chunk_a, chunk_b])
 
-    results = index.search("calibracion balanza", allowed_ids={"itest-a"}, top_k=5)
-    result_ids = {chunk_id for chunk_id, _ in results}
+    results = index.search("calibracion balanza", allowed_customer_ids={101}, top_k=5)
+    result_ids = {chunk_id for chunk_id, _, _ in results}
     assert "itest-a" in result_ids
     assert "itest-b" not in result_ids
 
@@ -124,9 +124,9 @@ def test_qdrant_tenant_isolation_prevents_cross_tenant_leak(qdrant_available: st
     )
     index.upsert([chunk_a, chunk_b])
 
-    # Search with only tenant A's chunk ID
-    results = index.search("calibracion temperatura", allowed_ids={"iso-a"}, top_k=10)
-    result_ids = {chunk_id for chunk_id, _ in results}
+    # Search with only tenant A's customer ID
+    results = index.search("calibracion temperatura", allowed_customer_ids={101}, top_k=10)
+    result_ids = {chunk_id for chunk_id, _, _ in results}
     assert result_ids == {"iso-a"}
     assert "iso-b" not in result_ids
 

@@ -33,7 +33,6 @@ def _sample_certificate_row(**overrides: Any) -> dict[str, object]:
     row: dict[str, object] = {
         "id": 1,
         "code": "CERT-2025-001",
-        "case_number": "CASO-100",
         "request_number": "REQ-200",
         "document_type": "calibracion",
         "issue_date": date(2025, 1, 18),
@@ -89,7 +88,7 @@ def test_mysql_loader_maps_real_columns_to_canonical_fields() -> None:
     assert cert.emitted_at == date(2025, 1, 18)
     assert cert.pdf_path == "certificates/CERT-2025-001.pdf"
     assert cert.document_type == "calibracion"
-    assert cert.case_number == "CASO-100"
+    assert cert.case_number is None
     assert cert.user_id == 9001
     assert cert.qr_code == "QR-abc123"
 

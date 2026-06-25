@@ -46,6 +46,37 @@ def build_pdf_chunks(certificates: list[Certificate], pdf_texts: dict[str, str])
     return chunks
 
 
+def build_s3_pdf_chunks(
+    certificates: list[Certificate],
+    pdf_texts: dict[int, str],  # certificate_id -> extracted text
+) -> list[DocumentChunk]:
+    """Create chunks from S3 PDF text, linked to certificates by ID.
+
+    Each chunk gets a deterministic ID using a ``:pdf:`` segment in the hash
+    to distinguish it from metadata chunks for the same certificate.
+    """
+
+    chunks: list[DocumentChunk] = []
+    for cert in certificates:
+        text = pdf_texts.get(cert.id)
+        if not text:
+            continue
+        for index, chunk_text in enumerate(split_text(text)):
+            digest = hashlib.sha256(f"{cert.code}:pdf:{index}:{chunk_text}".encode()).hexdigest()[:16]
+            chunks.append(
+                DocumentChunk(
+                    id=digest,
+                    certificate_id=cert.id,
+                    certificate_code=cert.code,
+                    customer_id=cert.customer_id,
+                    source_type="pdf_text",
+                    path=f"s3://{cert.pdf_path}",
+                    text=chunk_text,
+                )
+            )
+    return chunks
+
+
 def build_metadata_chunks(certificates: list[Certificate]) -> list[DocumentChunk]:
     """Create metadata-enriched chunks from certificate fields (real mode).
 

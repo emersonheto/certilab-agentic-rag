@@ -21,7 +21,6 @@ class DatabaseConnection(Protocol):
 ALLOWED_CERTIFICATE_COLUMNS = (
     "id",
     "code",
-    "case_number",
     "request_number",
     "document_type",
     "issue_date",
@@ -46,7 +45,7 @@ SENSITIVE_COLUMN_NAMES = {
 
 ALLOWED_SELECT_QUERIES: dict[str, str] = {
     "certificates": """
-        SELECT id, code, case_number, request_number, document_type, issue_date,
+        SELECT id, code, request_number, document_type, issue_date,
                service_date, customer_id, user_id, pdf_document_path, qr_code, status
         FROM certificates
         WHERE (%s IS NULL OR customer_id = %s)

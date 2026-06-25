@@ -1,7 +1,6 @@
 import os
 import socket
 from collections.abc import Callable
-from pathlib import Path
 
 import pytest
 
@@ -79,6 +78,16 @@ def demo_client_101_token() -> str:
 
 
 @pytest.fixture()
+def demo_admin_token() -> str:
+    return os.environ["DEMO_ADMIN_TOKEN"]
+
+
+@pytest.fixture()
+def demo_technician_token() -> str:
+    return os.environ["DEMO_TECHNICIAN_TOKEN"]
+
+
+@pytest.fixture()
 def qdrant_available() -> str | None:
     """Return the Qdrant URL if a Qdrant instance is reachable, else None."""
 
@@ -102,19 +111,18 @@ def _clear_settings_cache() -> None:
     get_settings.cache_clear()
 
 
+# Fixed test tokens — self-contained, no file dependency.
+# These are test-only values; never used outside the test suite.
+_TEST_DEMO_TOKENS: dict[str, str] = {
+    "DEMO_ADMIN_TOKEN": "test-admin-token",
+    "DEMO_TECHNICIAN_TOKEN": "test-technician-token",
+    "DEMO_CLIENT_101_TOKEN": "test-client-101-token",
+    "DEMO_CLIENT_202_TOKEN": "test-client-202-token",
+}
+
+
 def _force_test_env(set_env: Callable[[str, str], object]) -> None:
     set_env("CERTILAB_RAG_DISABLE_DOTENV", "true")
     set_env("PHOENIX_ENABLED", "false")
-    for key, value in _demo_tokens_from_example().items():
+    for key, value in _TEST_DEMO_TOKENS.items():
         set_env(key, value)
-
-
-def _demo_tokens_from_example() -> dict[str, str]:
-    tokens: dict[str, str] = {}
-    for line in Path(".env.example").read_text(encoding="utf-8").splitlines():
-        if "=" not in line or line.startswith("#"):
-            continue
-        key, value = line.split("=", 1)
-        if key.startswith("DEMO_"):
-            tokens[key] = value.strip('"')
-    return tokens

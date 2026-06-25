@@ -1,6 +1,7 @@
 import math
 import re
 from collections import Counter
+from typing import Any
 
 from app.domain.models import DocumentChunk
 from app.retrieval.constants import DEFAULT_RETRIEVAL_TOP_K
@@ -33,20 +34,39 @@ class InMemoryVectorIndex:
         self._chunks.extend(chunks)
         self._vectors.extend(Counter(tokenize(chunk.text)) for chunk in chunks)
 
-    def search(self, query: str, allowed_ids: set[str], top_k: int = DEFAULT_RETRIEVAL_TOP_K) -> list[tuple[str, float]]:
-        """Search for chunks matching *query*, restricted to *allowed_ids*.
+    def search(
+        self, query: str, allowed_customer_ids: set[int] | None, top_k: int = DEFAULT_RETRIEVAL_TOP_K
+    ) -> list[tuple[str, float, dict[str, Any]]]:
+        """Search for chunks matching *query*, filtered by *allowed_customer_ids*.
 
-        Returns ``(chunk_id, score)`` tuples sorted by descending score.
+        ``allowed_customer_ids``:
+        - ``None`` — global scope: return all chunks.
+        - ``set()`` — empty set: return no results (fail-closed).
+        - ``{1, 2}`` — return only chunks whose ``customer_id`` is in the set.
+
+        Returns ``(chunk_id, score, payload)`` triples sorted by descending score.
         """
 
+        if allowed_customer_ids is not None and not allowed_customer_ids:
+            return []
+
         query_vector = Counter(tokenize(query))
-        scored: list[tuple[str, float]] = []
+        scored: list[tuple[str, float, dict[str, Any]]] = []
         for chunk, vector in zip(self._chunks, self._vectors, strict=True):
-            if chunk.id not in allowed_ids:
+            if allowed_customer_ids is not None and chunk.customer_id not in allowed_customer_ids:
                 continue
             score = _cosine(query_vector, vector)
             if score > 0:
-                scored.append((chunk.id, score))
+                payload = {
+                    "customer_id": chunk.customer_id,
+                    "code": chunk.certificate_code,
+                    "certificate_id": chunk.certificate_id,
+                    "source_type": chunk.source_type,
+                    "path": chunk.path,
+                    "text": chunk.text,
+                    "chunk_id": chunk.id,
+                }
+                scored.append((chunk.id, score, payload))
         return sorted(scored, key=lambda item: item[1], reverse=True)[:top_k]
 
 

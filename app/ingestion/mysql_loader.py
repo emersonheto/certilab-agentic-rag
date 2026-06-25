@@ -16,6 +16,10 @@ _FORBIDDEN_PII_KEYS = frozenset({"password", "plain_password", "remember_token",
 # Default segment value for real customers (real schema has no segment column).
 _DEFAULT_CUSTOMER_SEGMENT = "general"
 
+# Human-readable labels for numeric enum columns in the real schema.
+_STATUS_LABELS: dict[int, str] = {1: "Pendiente", 2: "Firmado"}
+_DOCUMENT_TYPE_LABELS: dict[int, str] = {0: "No acreditado", 1: "Acreditado"}
+
 
 class MySQLLoader:
     """Load certificate data from the real MySQL schema behind the CertificateLoader protocol.
@@ -64,13 +68,13 @@ class MySQLLoader:
                     id=_as_int(row["id"]),
                     code=_as_str(row["code"]),
                     customer_id=_as_int(row["customer_id"]),
-                    status=_as_str(row["status"]),
+                    status=_map_status(row["status"]),
                     emitted_at=_as_date(row["issue_date"]),
                     technician_id=_as_int_or_default(row.get("user_id"), 0),
                     equipment="",
                     pdf_path=_as_str(row.get("pdf_document_path", "")),
-                    document_type=_as_optional_str(row.get("document_type")),
-                    case_number=_as_optional_str(row.get("case_number")),
+                    document_type=_map_document_type(row.get("document_type")),
+                    case_number=None,
                     user_id=_as_optional_int(row.get("user_id")),
                     qr_code=_as_optional_str(row.get("qr_code")),
                     request_number=_as_optional_str(row.get("request_number")),
@@ -134,6 +138,24 @@ def _as_date(value: object) -> date:
     if isinstance(value, str):
         return date.fromisoformat(value)
     raise ValueError(f"Cannot parse date from {type(value).__name__}: {value!r}")
+
+
+def _map_status(value: object) -> str:
+    """Map numeric status to human-readable label."""
+    try:
+        return _STATUS_LABELS.get(int(str(value)), _as_str(value))  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return _as_str(value)
+
+
+def _map_document_type(value: object) -> str | None:
+    """Map numeric document_type to human-readable label."""
+    if value is None:
+        return None
+    try:
+        return _DOCUMENT_TYPE_LABELS.get(int(str(value)), _as_str(value))  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return _as_optional_str(value)
 
 
 def _as_optional_date(value: object) -> date | None:

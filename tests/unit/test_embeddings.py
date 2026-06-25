@@ -94,3 +94,63 @@ def test_from_settings_builds_config() -> None:
     assert config.provider == "auto"
     assert config.openai_embedding_model == "text-embedding-3-small"
     assert config.sentence_transformers_model == "all-MiniLM-L6-v2"
+
+
+def test_embed_batch_empty_list() -> None:
+    """embed_batch with empty list must return empty list."""
+    config = EmbeddingProviderConfig(
+        provider="local",
+        openai_api_key=None,
+        openai_embedding_model="text-embedding-3-small",
+        sentence_transformers_model="all-MiniLM-L6-v2",
+    )
+    provider = EmbeddingsProvider(config)
+    provider._local_engine = None
+    provider._local_error = RuntimeError("no model")
+
+    result = provider.embed_batch([])
+    assert result == []
+
+
+def test_embed_batch_returns_correct_count() -> None:
+    """embed_batch must return one vector per input text."""
+    config = EmbeddingProviderConfig(
+        provider="local",
+        openai_api_key=None,
+        openai_embedding_model="text-embedding-3-small",
+        sentence_transformers_model="all-MiniLM-L6-v2",
+    )
+    provider = EmbeddingsProvider(config)
+    provider._local_engine = None
+    provider._local_error = RuntimeError("no model")
+
+    texts = ["hello world", "test text", "third one"]
+    result = provider.embed_batch(texts)
+
+    assert len(result) == 3
+    assert all(len(v) == 384 for v in result)
+    # Deterministic: same batch produces same vectors
+    result2 = provider.embed_batch(texts)
+    assert result == result2
+
+
+def test_embed_batch_fallback_after_openai_failure() -> None:
+    """When OpenAI batch fails, embed_batch must fall back to local/zero."""
+    config = EmbeddingProviderConfig(
+        provider="openai",
+        openai_api_key="sk-test-batch-fail",
+        openai_embedding_model="text-embedding-3-small",
+        sentence_transformers_model="all-MiniLM-L6-v2",
+    )
+    provider = EmbeddingsProvider(config)
+    provider._local_engine = None
+    provider._local_error = RuntimeError("no model")
+
+    # Patch _embed_batch_openai to raise
+    import unittest.mock as mock
+
+    with mock.patch.object(provider, "_embed_batch_openai", side_effect=RuntimeError("API error")):
+        result = provider.embed_batch(["some text"])
+
+    assert len(result) == 1
+    assert all(v == 0.0 for v in result[0])

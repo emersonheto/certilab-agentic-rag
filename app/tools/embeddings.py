@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from app.config import Settings
+from app.observability import trace_span
 
 ProviderName = Literal["openai", "local"]
 
@@ -21,6 +23,7 @@ class EmbeddingProviderConfig:
     openai_api_key: str | None
     openai_embedding_model: str
     sentence_transformers_model: str
+    embedding_batch_size: int = 100
 
     @classmethod
     def from_settings(cls, settings: Settings) -> EmbeddingProviderConfig:
@@ -31,6 +34,7 @@ class EmbeddingProviderConfig:
             openai_api_key=settings.openai_api_key,
             openai_embedding_model=settings.openai_embedding_model,
             sentence_transformers_model=settings.sentence_transformers_model,
+            embedding_batch_size=settings.embedding_batch_size,
         )
 
 
@@ -87,18 +91,55 @@ class EmbeddingsProvider:
     def embed(self, text: str) -> list[float]:
         """Embed a single text, falling back deterministically on any failure."""
 
-        if self._active_provider == "openai":
-            try:
-                return self._embed_openai(text)
-            except Exception:
-                # Fall back to local on any OpenAI error
-                pass
-        return self._embed_local_or_zero(text)
+        started_at = time.perf_counter()
+        with trace_span("rag.embed") as span:
+            if self._active_provider == "openai":
+                try:
+                    result = self._embed_openai(text)
+                    span.set_attribute("rag.embed.provider", "openai")
+                    span.set_attribute("rag.embed.vector_dim", len(result))
+                    span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+                    return result
+                except Exception:
+                    # Fall back to local on any OpenAI error
+                    pass
+            result = self._embed_local_or_zero(text)
+            span.set_attribute(
+                "rag.embed.provider",
+                "local" if self._local_engine is not None else "zero_fallback",
+            )
+            span.set_attribute("rag.embed.vector_dim", len(result))
+            span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+            return result
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed multiple texts, returning one vector per input."""
+        """Embed multiple texts, returning one vector per input.
 
-        return [self.embed(text) for text in texts]
+        Uses OpenAI's batch embeddings API when available, falling back to
+        per-text local embedding on any failure.
+        """
+
+        started_at = time.perf_counter()
+        with trace_span("rag.embed_batch") as span:
+            span.set_attribute("rag.embed.batch_size", len(texts))
+            if not texts:
+                span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+                return []
+            if self._active_provider == "openai":
+                try:
+                    result = self._embed_batch_openai(texts)
+                    span.set_attribute("rag.embed.provider", "openai")
+                    span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+                    return result
+                except Exception:
+                    pass
+            result = [self._embed_local_or_zero(text) for text in texts]
+            span.set_attribute(
+                "rag.embed.provider",
+                "local" if self._local_engine is not None else "zero_fallback",
+            )
+            span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+            return result
 
     def _resolve_provider(self) -> ProviderName:
         if self._config.provider == "local":
@@ -134,6 +175,24 @@ class EmbeddingsProvider:
             input=text,
         )
         return list(response.data[0].embedding)
+
+    def _embed_batch_openai(self, texts: list[str]) -> list[list[float]]:
+        """Embed multiple texts in a single OpenAI API call (up to 2048 inputs)."""
+        if self._openai_client is None:
+            from openai import OpenAI
+
+            self._openai_client = OpenAI(api_key=self._config.openai_api_key)
+        batch_size = self._config.embedding_batch_size
+        results: list[list[float]] = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            response = self._openai_client.embeddings.create(
+                model=self._config.openai_embedding_model,
+                input=batch,
+            )
+            sorted_data = sorted(response.data, key=lambda x: x.index)
+            results.extend(list(d.embedding) for d in sorted_data)
+        return results
 
     def _embed_local_or_zero(self, text: str) -> list[float]:
         if self._local_engine is not None:

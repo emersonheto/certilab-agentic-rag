@@ -5,7 +5,7 @@ from app.ingestion.indexer import InMemoryVectorIndex
 from app.retrieval.constants import DEFAULT_RETRIEVAL_TOP_K
 from app.retrieval.protocols import VectorIndex
 from app.retrieval.query import extract_certificate_code
-from app.security.access_control import AccessScope, filter_chunks
+from app.security.access_control import AccessScope
 
 
 class SemanticRetriever:
@@ -14,40 +14,63 @@ class SemanticRetriever:
     Accepts an optional ``index`` implementing the VectorIndex protocol.
     When no index is provided, an InMemoryVectorIndex is built internally
     (mock/hermetic mode). In real mode, a QdrantVectorIndex is injected.
+
+    Tenant isolation is enforced at the index level via ``allowed_customer_ids``
+    payload filtering — no in-memory chunk lookups are needed for Qdrant mode.
     """
 
-    def __init__(self, chunks: list[DocumentChunk], index: VectorIndex | None = None) -> None:
-        self._chunks = chunks
-        self._chunk_lookup: dict[str, DocumentChunk] = {chunk.id: chunk for chunk in chunks}
+    def __init__(self, chunks: list[DocumentChunk] | None = None, index: VectorIndex | None = None) -> None:
         if index is None:
+            # Mock mode: need chunks to build InMemoryVectorIndex
+            self._chunks = chunks or []
             index = InMemoryVectorIndex()
-            index.upsert(chunks)
+            index.upsert(self._chunks)
+        else:
+            # Real mode: Qdrant has everything, no need to keep chunks in memory
+            self._chunks = []
         self._index = index
 
     def retrieve(
         self, question: str, scope: AccessScope, top_k: int = DEFAULT_RETRIEVAL_TOP_K
     ) -> tuple[str, list[RetrievedSource]]:
-        visible_chunks = filter_chunks(scope, self._chunks)
+        # Determine customer filter from scope
+        allowed_customer_ids: set[int] | None
+        if scope.is_global:
+            allowed_customer_ids = None  # ADMIN/TECHNICIAN: see all
+        else:
+            assert scope.customer_id is not None, "CLIENT scope must have customer_id"
+            allowed_customer_ids = {scope.customer_id}  # CLIENT: only own data
+
+        # If we have chunks (mock mode) and a specific code is requested, filter pre-search
         requested_code = extract_certificate_code(question)
-        if requested_code is not None:
-            visible_chunks = [chunk for chunk in visible_chunks if chunk.certificate_code == requested_code]
-        allowed_ids = {chunk.id for chunk in visible_chunks}
-        results = self._index.search(question, allowed_ids, top_k=top_k)
+        if requested_code is not None and self._chunks:
+            # In mock mode, filter chunks by code and build customer set from them
+            matching_customer_ids = {
+                chunk.customer_id
+                for chunk in self._chunks
+                if chunk.certificate_code == requested_code
+            }
+            if allowed_customer_ids is None:
+                allowed_customer_ids = matching_customer_ids
+            else:
+                allowed_customer_ids &= matching_customer_ids
+            if not allowed_customer_ids:
+                return "No se encontraron fragmentos técnicos relevantes dentro del alcance autorizado.", []
+
+        results = self._index.search(question, allowed_customer_ids, top_k=top_k)
         if not results:
             return "No se encontraron fragmentos técnicos relevantes dentro del alcance autorizado.", []
+
         sources = []
-        for chunk_id, score in results:
-            chunk = self._chunk_lookup.get(chunk_id)
-            if chunk is None:
-                continue
+        for chunk_id, score, payload in results:
             sources.append(
                 RetrievedSource(
-                    certificate_id=chunk.certificate_id,
-                    code=chunk.certificate_code,
-                    customer_id=chunk.customer_id,
-                    source_type=chunk.source_type,
-                    path=chunk.path,
-                    snippet=chunk.text[:260],
+                    certificate_id=payload.get("certificate_id"),
+                    code=payload.get("code", ""),
+                    customer_id=payload.get("customer_id"),
+                    source_type=payload.get("source_type", "semantic"),
+                    path=payload.get("path", ""),
+                    snippet=payload.get("text", "")[:260],
                     score=score,
                 )
             )

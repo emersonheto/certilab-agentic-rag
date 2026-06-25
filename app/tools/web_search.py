@@ -7,6 +7,7 @@ from app.security.payload_sanitizer import sanitize_query_for_external_search, s
 @dataclass(frozen=True)
 class WebSearchConfig:
     tavily_api_key: str | None
+    max_results: int = 3
 
 
 @dataclass(frozen=True)
@@ -35,12 +36,12 @@ class TavilyWebSearch:
             safe_query = sanitize_query_for_external_search(query)
             if not safe_query:
                 return [_fallback_result("Web search skipped because the sanitized query is empty.")]
-            response = self._get_client().search(query=safe_query, max_results=3)
+            response = self._get_client().search(query=safe_query, max_results=self._config.max_results)
         except Exception as exc:
             return [_fallback_result(f"Tavily search unavailable: {type(exc).__name__}.")]
         raw_results = response.get("results", []) if isinstance(response, dict) else []
         results: list[WebSearchResult] = []
-        for item in raw_results[:3]:
+        for item in raw_results[:self._config.max_results]:
             if not isinstance(item, dict):
                 continue
             results.append(

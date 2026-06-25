@@ -33,7 +33,7 @@ def resolve_env_file() -> Path | None:
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file=None, env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=None, env_file_encoding="utf-8", extra="ignore", populate_by_name=True)
 
     def __init__(self, **values: Any) -> None:
         if "_env_file" not in values:
@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"
     openai_chat_model: str = "gpt-4o-mini"
+    openai_temperature: float = Field(default=0.0, alias="OPENAI_TEMPERATURE")
+    web_search_max_results: int = Field(default=3, alias="WEB_SEARCH_MAX_RESULTS")
+    qdrant_upsert_batch_size: int = Field(default=200, alias="QDRANT_UPSERT_BATCH_SIZE")
+    embedding_batch_size: int = Field(default=100, alias="EMBEDDING_BATCH_SIZE")
     tavily_api_key: str | None = None
     qdrant_url: str | None = None
     qdrant_collection: str = "certilab-rag"

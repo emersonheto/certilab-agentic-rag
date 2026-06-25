@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.domain.models import DocumentChunk
+from app.observability import trace_span
 
 
 class EmbeddingProviderProtocol(Protocol):
     """Minimal interface QdrantVectorIndex needs from an embedding provider."""
 
     def embed(self, text: str) -> list[float]: ...
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]: ...
 
     @property
     def dimension(self) -> int: ...
@@ -26,16 +30,6 @@ class _SimplePoint:
     id: str
     vector: list[float]
     payload: dict[str, Any]
-
-
-@dataclass
-class _SimpleHasIdCondition:
-    has_id: list[str]
-
-
-@dataclass
-class _SimpleFilter:
-    should: list[Any] | None = None
 
 
 @dataclass
@@ -55,18 +49,6 @@ def _make_point(point_id: str, vector: list[float], payload: dict[str, Any]) -> 
         return _SimplePoint(id=point_id, vector=vector, payload=payload)
 
 
-def _make_filter(allowed_ids: set[str]) -> Any:
-    """Create a Qdrant filter restricting results to *allowed_ids*."""
-
-    id_list = sorted(allowed_ids)
-    try:
-        from qdrant_client.models import Filter, HasIdCondition
-
-        return Filter(should=[HasIdCondition(has_id=id_list)])  # type: ignore[arg-type]
-    except ImportError:
-        return _SimpleFilter(should=[_SimpleHasIdCondition(has_id=id_list)])
-
-
 def _make_vector_params(size: int, distance: str) -> Any:
     try:
         from qdrant_client.models import Distance, VectorParams
@@ -81,8 +63,9 @@ class QdrantVectorIndex:
     """Qdrant-backed VectorIndex implementation with idempotent collection init.
 
     Stores tenant scope (customer_id) and certificate code in each point's
-    payload. Retrieval is restricted to ``allowed_ids`` so tenant isolation
-    is enforced at the index level.
+    payload. Retrieval is restricted by ``allowed_customer_ids`` using Qdrant
+    payload filtering so tenant isolation is enforced at the index level without
+    in-memory lookup dictionaries.
 
     Collection initialization is idempotent: the collection is created only if
     it does not already exist, preserving any previously ingested data.
@@ -92,12 +75,12 @@ class QdrantVectorIndex:
       text to DocumentChunk.text; the embedding provider only sees that
       sanitized text. PII (password, ruc, email, phone) is structurally
       excluded at the connector level.
-    - Tenant isolation: every search call receives an ``allowed_ids`` set
-      computed from the caller's AccessScope. Points outside this set are
-      filtered server-side by Qdrant and never returned, preventing
+    - Tenant isolation: every search call receives an ``allowed_customer_ids``
+      set computed from the caller's AccessScope. Points outside this set are
+      filtered server-side by Qdrant payload and never returned, preventing
       cross-tenant data leakage.
-    - A search with an empty ``allowed_ids`` set returns no results, ensuring
-      fail-closed behavior when no tenant scope is available.
+    - A search with an empty ``allowed_customer_ids`` set returns no results,
+      ensuring fail-closed behavior when no tenant scope is available.
     """
 
     def __init__(
@@ -107,14 +90,14 @@ class QdrantVectorIndex:
         embedding_provider: EmbeddingProviderProtocol,
         vector_size: int,
         distance: str = "Cosine",
+        upsert_batch_size: int = 200,
     ) -> None:
         self._client = client
         self._collection_name = collection_name
         self._embedding_provider = embedding_provider
         self._vector_size = vector_size
         self._distance = distance
-        self._chunk_to_uuid: dict[str, str] = {}
-        self._uuid_to_chunk: dict[str, str] = {}
+        self._upsert_batch_size = upsert_batch_size
         self._ensure_collection()
 
     def _ensure_collection(self) -> None:
@@ -127,51 +110,126 @@ class QdrantVectorIndex:
             )
 
     def upsert(self, chunks: list[DocumentChunk]) -> None:
-        """Embed and upsert document chunks with tenant metadata in payload."""
+        """Embed and upsert document chunks with tenant metadata in payload.
 
-        if not chunks:
-            return
-        points = []
-        for chunk in chunks:
-            vector = self._embedding_provider.embed(chunk.text)
-            point_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, chunk.id))
-            self._chunk_to_uuid[chunk.id] = point_uuid
-            self._uuid_to_chunk[point_uuid] = chunk.id
-            payload = {
-                "customer_id": chunk.customer_id,
-                "code": chunk.certificate_code,
-                "certificate_id": chunk.certificate_id,
-                "source_type": chunk.source_type,
-                "path": chunk.path,
-                "text": chunk.text,
-            }
-            points.append(_make_point(point_uuid, vector, payload))
-        self._client.upsert(collection_name=self._collection_name, points=points)
-
-    def search(self, query: str, allowed_ids: set[str], top_k: int) -> list[tuple[str, float]]:
-        """Search for chunks matching *query*, restricted to *allowed_ids*.
-
-        Returns ``(chunk_id, score)`` tuples sorted by descending score.
-        Chunks not in *allowed_ids* are never returned.
+        Idempotent: chunks whose deterministic UUID already exists in Qdrant
+        are skipped (no re-embedding, no re-write).
         """
 
-        if not allowed_ids:
-            return []
-        uuid_allowed = {self._chunk_to_uuid[cid] for cid in allowed_ids if cid in self._chunk_to_uuid}
-        if not uuid_allowed:
-            return []
+        started_at = time.perf_counter()
+        with trace_span("rag.ingest.upsert") as span:
+            if not chunks:
+                span.set_attribute("rag.ingest.new_chunks", 0)
+                span.set_attribute("rag.ingest.skipped_chunks", 0)
+                span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+                return
+
+            # Compute deterministic UUIDs for all chunks
+            candidate_uuids: dict[str, DocumentChunk] = {}
+            for chunk in chunks:
+                point_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, chunk.id))
+                candidate_uuids[point_uuid] = chunk
+
+            # Check which UUIDs already exist in Qdrant
+            existing = self._client.retrieve(
+                collection_name=self._collection_name,
+                ids=list(candidate_uuids.keys()),
+                with_payload=False,
+                with_vectors=False,
+            )
+            existing_ids = {str(point.id) for point in existing}
+
+            # Only embed + upsert what's new
+            new_chunks = [chunk for uuid_str, chunk in candidate_uuids.items() if uuid_str not in existing_ids]
+            skipped_count = len(chunks) - len(new_chunks)
+            if not new_chunks:
+                span.set_attribute("rag.ingest.new_chunks", 0)
+                span.set_attribute("rag.ingest.skipped_chunks", skipped_count)
+                span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+                return
+
+            # Batch embed all new chunks at once
+            texts = [chunk.text for chunk in new_chunks]
+            vectors = self._embedding_provider.embed_batch(texts)
+
+            points = []
+            for chunk, vector in zip(new_chunks, vectors, strict=True):
+                point_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, chunk.id))
+                payload = {
+                    "chunk_id": chunk.id,
+                    "customer_id": chunk.customer_id,
+                    "code": chunk.certificate_code,
+                    "certificate_id": chunk.certificate_id,
+                    "source_type": chunk.source_type,
+                    "path": chunk.path,
+                    "text": chunk.text,
+                }
+                points.append(_make_point(point_uuid, vector, payload))
+
+            # Upsert in batches to stay under Qdrant's 32MB payload limit
+            batch_size = self._upsert_batch_size
+            for i in range(0, len(points), batch_size):
+                self._client.upsert(
+                    collection_name=self._collection_name,
+                    points=points[i : i + batch_size],
+                )
+
+            span.set_attribute("rag.ingest.new_chunks", len(new_chunks))
+            span.set_attribute("rag.ingest.skipped_chunks", skipped_count)
+            span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+
+    def search(
+        self, query: str, allowed_customer_ids: set[int] | None, top_k: int
+    ) -> list[tuple[str, float, dict[str, Any]]]:
+        """Search for chunks matching *query*, filtered by *allowed_customer_ids*.
+
+        ``allowed_customer_ids``:
+        - ``None`` — global scope (ADMIN/TECHNICIAN): return all chunks.
+        - ``set()`` — empty set: return no results (fail-closed).
+        - ``{1, 2}`` — return only chunks whose payload ``customer_id`` is in the set.
+
+        Returns ``(chunk_id, score, payload)`` triples.
+        """
+
+        if allowed_customer_ids is not None and not allowed_customer_ids:
+            return []  # fail-closed for empty scope
+
         query_vector = self._embedding_provider.embed(query)
-        query_filter = _make_filter(uuid_allowed)
+
+        # Build filter: None = no filter (global scope), set = filter by customer_id
+        query_filter = None
+        if allowed_customer_ids is not None:
+            from qdrant_client.models import FieldCondition, Filter, MatchAny
+
+            query_filter = Filter(
+                must=[
+                    FieldCondition(key="customer_id", match=MatchAny(any=list(allowed_customer_ids)))
+                ]
+            )
+
         response = self._client.query_points(
             collection_name=self._collection_name,
             query=query_vector,
             query_filter=query_filter,
             limit=top_k,
+            with_payload=True,
         )
         return [
-            (self._uuid_to_chunk.get(str(point.id), str(point.id)), float(point.score))
+            (point.payload.get("chunk_id", str(point.id)), float(point.score), point.payload)
             for point in response.points
         ]
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return collection statistics for ingestion tracking."""
+
+        try:
+            info = self._client.get_collection(self._collection_name)
+            return {
+                "total_points": info.points_count or 0,
+                "indexed_vectors": info.indexed_vectors_count or 0,
+            }
+        except Exception:
+            return {"total_points": 0, "indexed_vectors": 0}
 
     @classmethod
     def from_settings(cls, settings: Any, embedding_provider: EmbeddingProviderProtocol) -> QdrantVectorIndex:
@@ -196,4 +254,5 @@ class QdrantVectorIndex:
             collection_name=settings.qdrant_collection,
             embedding_provider=embedding_provider,
             vector_size=embedding_provider.dimension,
+            upsert_batch_size=settings.qdrant_upsert_batch_size,
         )

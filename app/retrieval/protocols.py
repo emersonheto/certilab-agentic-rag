@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.domain.models import DocumentChunk
 
@@ -10,14 +10,25 @@ class VectorIndex(Protocol):
 
     Both the in-memory mock index and the Qdrant-backed real index implement
     this protocol so the SemanticRetriever can work with either.
+
+    Search results are filtered by ``allowed_customer_ids`` via Qdrant payload
+    instead of pre-computed ID sets, eliminating the need for in-memory lookup
+    dictionaries.
     """
 
     def upsert(self, chunks: list[DocumentChunk]) -> None:
         """Insert or update document chunks into the index."""
 
-    def search(self, query: str, allowed_ids: set[str], top_k: int) -> list[tuple[str, float]]:
-        """Search for chunks matching *query*, restricted to *allowed_ids*.
+    def search(
+        self, query: str, allowed_customer_ids: set[int] | None, top_k: int
+    ) -> list[tuple[str, float, dict[str, Any]]]:
+        """Search for chunks matching *query*, filtered by *allowed_customer_ids*.
 
-        Returns a list of ``(chunk_id, score)`` tuples sorted by descending
-        score.
+        ``allowed_customer_ids``:
+        - ``None`` — global scope (ADMIN/TECHNICIAN): return all chunks.
+        - ``set()`` — empty set: return no results (fail-closed).
+        - ``{1, 2}`` — return only chunks whose payload ``customer_id`` is in the set.
+
+        Returns ``(chunk_id, score, payload)`` triples sorted by descending
+        score. The caller builds ``RetrievedSource`` from payload data.
         """

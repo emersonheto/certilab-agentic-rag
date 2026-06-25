@@ -60,6 +60,9 @@ El árbol de trazas incluye spans para el pipeline determinístico y, si `GRAPH_
 | `rag.langgraph.retrieve_semantic` | Nodo de recuperación semántica en LangGraph. |
 | `rag.langgraph.web_search` | Nodo de web search opcional en LangGraph. |
 | `rag.langgraph.generate_answer` | Nodo final de generación/fallback en LangGraph. |
+| `rag.embed` | Generación de embedding para una consulta individual. |
+| `rag.embed_batch` | Generación de embeddings en lote (ingesta de chunks de PDF). |
+| `rag.ingest.upsert` | Inserción idempotente de chunks nuevos en Qdrant (sin re-embeber existentes). |
 
 Los atributos útiles incluyen:
 
@@ -77,6 +80,11 @@ Los atributos útiles incluyen:
 | `rag.used_fallback` | Indica si la respuesta final usó el texto determinístico en vez de OpenAI. |
 | `rag.question_length` | Solo longitud de la pregunta; la pregunta completa no se traza intencionalmente. |
 | `rag.duration_ms` | Tiempo transcurrido aproximado del paso instrumentado. |
+| `rag.embed.provider` | Proveedor usado: `openai`, `local` o `zero_fallback`. |
+| `rag.embed.vector_dim` | Dimensión del vector generado. |
+| `rag.embed.batch_size` | Cantidad de textos embebidos en lote. |
+| `rag.ingest.new_chunks` | Chunks nuevos efectivamente embebidos e insertados. |
+| `rag.ingest.skipped_chunks` | Chunks ya presentes (cacheados, no re-embebidos). |
 
 ## Valores seguros por defecto
 
@@ -86,6 +94,7 @@ Los atributos útiles incluyen:
 - Los identificadores de fuente y códigos de certificado no se exportan como atributos de traza; se usa telemetría basada en conteos.
 - Los spans determinísticos y `rag.langgraph.*` comparten el mismo criterio: longitudes, conteos, ruta, rol y latencias; nunca payloads completos.
 - Si fallan los paquetes opcionales de tracing, la configuración de Phoenix o las operaciones de ciclo de vida de spans, el tracing degrada a no-op en lugar de fallar solicitudes de la aplicación.
+- Los spans de embedding (`rag.embed`, `rag.embed_batch`, `rag.ingest.upsert`) siguen la misma política: solo se registran nombre del proveedor, conteos, dimensiones y latencias. El texto de los chunks y los vectores generados nunca se exportan como atributos de traza.
 
 ## Alternativa de inicio desde Python
 
