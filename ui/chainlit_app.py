@@ -164,6 +164,12 @@ if cl is not None:
             route = await client.route(message.content)
             step.output = f"Ruta seleccionada: {_route_label(route)}"
 
+        # Short-circuit for off-topic: don't retrieve or generate
+        if route == "off_topic":
+            from app.pipeline.guards import OFF_TOPIC_ANSWER
+            await cl.Message(content=OFF_TOPIC_ANSWER).send()
+            return
+
         # Phase 2: Retrieve
         async with cl.Step(name="🔍 Recuperando fuentes") as step:
             step.output = "Buscando información relevante..."
