@@ -10,9 +10,6 @@ Use `uv` for every local command:
 # Base dev + course integrations + observability
 uv sync --extra dev --extra future-integrations --extra observability
 
-# Add local embeddings (sentence-transformers, no API key required)
-uv sync --extra dev --extra future-integrations --extra observability --extra local-embeddings
-
 uv run pytest
 uv run ruff check .
 uv run mypy app
@@ -53,7 +50,7 @@ If LangGraph is not installed, the app falls back to the deterministic pipeline.
 
 - **Data**: `MySQLLoader` reads from the test MySQL database via `DB_*` settings.
 - **Vector store**: `QdrantVectorIndex` persists and searches embeddings in Qdrant (Docker Compose).
-- **Embeddings**: `EmbeddingsProvider` uses OpenAI `text-embedding-3-small` by default, falls back to `sentence-transformers` locally, and degrades to a zero-vector if both are unavailable.
+- **Embeddings**: `EmbeddingsProvider` uses OpenAI `text-embedding-3-small` (1536-dim) exclusively; if the call fails it raises and the pipeline degrades to structured retrieval.
 - **Answer generation**: OpenAI `gpt-4o-mini` when `OPENAI_API_KEY` is set; deterministic fallback otherwise.
 
 Start Qdrant before running in real mode:
@@ -76,18 +73,12 @@ The Qdrant collection (`certilab-rag` by default) is created idempotently on fir
 
 ## Embeddings provider
 
-Controlled by `EMBEDDING_PROVIDER`:
+OpenAI is the **only** embedding provider (`text-embedding-3-small`, 1536-dim vectors). There is no local/sentence-transformers fallback and no zero-vector path. If `OPENAI_API_KEY` is missing or the call fails, the provider raises and the pipeline degrades to structured retrieval.
 
-| Value | Behavior |
-|---|---|
-| `auto` (default) | OpenAI if `OPENAI_API_KEY` is set; otherwise sentence-transformers |
-| `openai` | OpenAI `text-embedding-3-small` (falls back to local if key is missing) |
-| `local` | sentence-transformers offline (no network or credentials) |
-
-Install local embeddings:
+Install integration dependencies:
 
 ```bash
-uv sync --extra local-embeddings
+uv sync --extra dev --extra future-integrations
 ```
 
 ## Tavily web search

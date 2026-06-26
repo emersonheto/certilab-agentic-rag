@@ -36,7 +36,7 @@ flowchart LR
 |---|---|---|
 | Loader | JSON fixtures en `data/mock/` | `MySQLLoader` → BD de pruebas vía `DB_*` |
 | Vector index | `InMemoryVectorIndex` (bag-of-words coseno) | `QdrantVectorIndex` (Qdrant vía Docker) |
-| Embeddings | Ninguno (tokens determinísticos) | `EmbeddingsProvider` (OpenAI → sentence-transformers → zero-vector) |
+| Embeddings | Ninguno (tokens determinísticos) | `EmbeddingsProvider` (OpenAI `text-embedding-3-small`, 1536-dim) |
 
 ## Decisiones de arquitectura
 
@@ -47,7 +47,7 @@ flowchart LR
 | Motor de grafo | `GRAPH_ENGINE=langgraph` por defecto; fallback a pipeline determinístico si no está instalado. |
 | Loader protocol | `CertificateLoader` protocol en `app/ingestion/protocols.py`; implementaciones mock y MySQL intercambiables. |
 | Vector index protocol | `VectorIndex` protocol en `app/retrieval/protocols.py`; implementaciones `InMemoryVectorIndex` (mock) y `QdrantVectorIndex` (real). |
-| Embeddings | `EmbeddingsProvider` con cadena OpenAI → sentence-transformers → zero-vector; sin requerir API key en mock. |
+| Embeddings | `EmbeddingsProvider` OpenAI-only (`text-embedding-3-small`); sin proveedor local ni vector cero. |
 | Seguridad | La API deriva un `Principal` server-side; toda consulta aplica filtro de rol y `customer_id` antes de recuperar. |
 | PII | `password`, `plain_password`, `remember_token`, `ruc`, `email`, `phone` excluidos del conector, el loader, los embeddings y los snippets. La tabla `users` no se consulta. |
 | Citas | Las respuestas usan `source_id` sanitizado; las rutas internas de almacenamiento no se exponen. |

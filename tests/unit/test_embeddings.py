@@ -1,156 +1,178 @@
+"""Tests for the OpenAI-only embedding provider.
+
+STRICT TDD: written before the implementation rewrite. The provider is now
+OpenAI-only — there is no local/sentence-transformers fallback and no
+zero-vector path. The OpenAI client call is mocked so no network/model
+loading occurs and the suite stays fast (<3s).
+"""
+
 from __future__ import annotations
 
-from app.tools.embeddings import EmbeddingsProvider, EmbeddingProviderConfig
+from typing import Any
+
+import pytest
+
+from app.tools.embeddings import EmbeddingProviderConfig, EmbeddingsProvider
+
+_OPENAI_DIM = 1536
 
 
-def test_missing_openai_api_key_triggers_local_fallback() -> None:
-    """When EMBEDDING_PROVIDER=auto/openai but no API key, fall back to local."""
+def _make_provider(monkeypatch: pytest.MonkeyPatch, *, stub: Any | None = None) -> EmbeddingsProvider:
+    """Build an OpenAI-only provider with ``_call_openai`` stubbed out."""
+
     config = EmbeddingProviderConfig(
-        provider="auto",
-        openai_api_key=None,
+        openai_api_key="sk-test-key",
         openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
     )
-
     provider = EmbeddingsProvider(config)
+    if stub is None:
+        stub = lambda texts: [[0.0] * _OPENAI_DIM for _ in texts]  # noqa: E731
+    monkeypatch.setattr(provider, "_call_openai", stub)
+    return provider
 
-    assert provider.active_provider == "local"
+
+# ── provider identity ─────────────────────────────────────────────────────────
 
 
-def test_openai_provider_selected_when_key_present() -> None:
-    """When API key is present and provider is auto/openai, use OpenAI."""
-    config = EmbeddingProviderConfig(
-        provider="auto",
-        openai_api_key="sk-test-key-123",
-        openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
-    )
+def test_active_provider_is_openai() -> None:
+    """The only supported provider is OpenAI."""
 
-    provider = EmbeddingsProvider(config)
+    provider = _make_provider(pytest.MonkeyPatch())
 
     assert provider.active_provider == "openai"
 
 
-def test_explicit_local_provider_ignores_openai_key() -> None:
-    """When EMBEDDING_PROVIDER=local, always use local even if OpenAI key exists."""
+def test_dimension_is_1536() -> None:
+    """OpenAI text-embedding-3-small always emits 1536-dim vectors."""
+
+    provider = _make_provider(pytest.MonkeyPatch())
+
+    assert provider.dimension == _OPENAI_DIM
+
+
+# ── embed / embed_batch ───────────────────────────────────────────────────────
+
+
+def test_embed_calls_openai_and_returns_vector(monkeypatch: pytest.MonkeyPatch) -> None:
+    """embed() delegates to the OpenAI call and returns its single vector."""
+
+    seen: list[list[str]] = []
+    expected = [0.1] * _OPENAI_DIM
+
+    def fake_call(texts: list[str]) -> list[list[float]]:
+        seen.append(texts)
+        return [expected]
+
+    provider = _make_provider(monkeypatch, stub=fake_call)
+
+    result = provider.embed("hello world")
+
+    assert result == expected
+    assert seen == [["hello world"]]
+
+
+def test_embed_batch_returns_correct_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    """embed_batch returns exactly one vector per input text."""
+
+    texts = ["hello world", "test text", "third one"]
+
+    def fake_call(batch: list[str]) -> list[list[float]]:
+        return [[float(i)] * _OPENAI_DIM for i, _ in enumerate(batch)]
+
+    provider = _make_provider(monkeypatch, stub=fake_call)
+
+    result = provider.embed_batch(texts)
+
+    assert len(result) == 3
+    assert all(len(v) == _OPENAI_DIM for v in result)
+    # order is preserved
+    assert result[0][0] == 0.0
+    assert result[1][0] == 1.0
+    assert result[2][0] == 2.0
+
+
+def test_embed_batch_empty_list_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """embed_batch([]) short-circuits without calling OpenAI."""
+
+    called: list[bool] = []
+
+    def fake_call(batch: list[str]) -> list[list[float]]:
+        called.append(True)
+        return []
+
+    provider = _make_provider(monkeypatch, stub=fake_call)
+
+    result = provider.embed_batch([])
+
+    assert result == []
+    assert called == []  # _call_openai must NOT be invoked
+
+
+class _FakeOpenAIClient:
+    """Stand-in for the OpenAI client that records create() call shapes."""
+
+    def __init__(self) -> None:
+        self.create_inputs: list[list[str]] = []
+
+        class _Embeddings:
+            def __init__(self, outer: _FakeOpenAIClient) -> None:
+                self._outer = outer
+
+            def create(self, model: str, input: list[str]) -> Any:
+                self._outer.create_inputs.append(input)
+
+                class _Item:
+                    def __init__(self, index: int) -> None:
+                        self.index = index
+                        self.embedding = [0.0] * _OPENAI_DIM
+
+                class _Resp:
+                    def __init__(self, items: list[_Item]) -> None:
+                        self.data = items
+
+                return _Resp([_Item(i) for i in range(len(input))])
+
+        self.embeddings = _Embeddings(self)
+
+
+def test_call_openai_chunks_by_batch_size() -> None:
+    """_call_openai splits inputs into embedding_batch_size-sized requests."""
+
     config = EmbeddingProviderConfig(
-        provider="local",
-        openai_api_key="sk-test-key-123",
+        openai_api_key="sk-test-key",
         openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
+        embedding_batch_size=2,
     )
-
     provider = EmbeddingsProvider(config)
+    provider._client = _FakeOpenAIClient()
 
-    assert provider.active_provider == "local"
+    texts = ["a", "b", "c", "d", "e"]
+    result = provider._call_openai(texts)
 
-
-def test_embed_returns_zero_vector_when_all_providers_fail() -> None:
-    """Deterministic zero-vector fallback when both OpenAI and local fail."""
-    config = EmbeddingProviderConfig(
-        provider="local",
-        openai_api_key=None,
-        openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
-    )
-
-    provider = EmbeddingsProvider(config)
-    # Simulate local model failure by patching _embed_local to raise
-    provider._local_engine = None
-    provider._local_error = RuntimeError("model not available")
-
-    vector = provider.embed("test text")
-
-    assert isinstance(vector, list)
-    assert all(v == 0.0 for v in vector)
-    assert len(vector) > 0
+    # one vector per input, order preserved
+    assert len(result) == 5
+    assert all(len(v) == _OPENAI_DIM for v in result)
+    # batch_size=2 → 3 client calls of sizes 2, 2, 1
+    assert [len(c) for c in provider._client.create_inputs] == [2, 2, 1]
 
 
-def test_embed_deterministic_for_same_input() -> None:
-    """Same input must produce the same vector (no randomness in fallback)."""
-    config = EmbeddingProviderConfig(
-        provider="local",
-        openai_api_key=None,
-        openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
-    )
-
-    provider = EmbeddingsProvider(config)
-    provider._local_engine = None
-    provider._local_error = RuntimeError("no model")
-
-    v1 = provider.embed("hello world")
-    v2 = provider.embed("hello world")
-
-    assert v1 == v2
+# ── config wiring ─────────────────────────────────────────────────────────────
 
 
 def test_from_settings_builds_config() -> None:
     from app.config import Settings
 
-    settings = Settings(_env_file=None)
+    settings = Settings(_env_file=None, embedding_batch_size=42)
     config = EmbeddingProviderConfig.from_settings(settings)
 
-    assert config.provider == "auto"
     assert config.openai_embedding_model == "text-embedding-3-small"
-    assert config.sentence_transformers_model == "all-MiniLM-L6-v2"
+    assert config.embedding_batch_size == 42
 
 
-def test_embed_batch_empty_list() -> None:
-    """embed_batch with empty list must return empty list."""
+def test_config_default_batch_size() -> None:
     config = EmbeddingProviderConfig(
-        provider="local",
-        openai_api_key=None,
+        openai_api_key="sk-test",
         openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
     )
-    provider = EmbeddingsProvider(config)
-    provider._local_engine = None
-    provider._local_error = RuntimeError("no model")
 
-    result = provider.embed_batch([])
-    assert result == []
-
-
-def test_embed_batch_returns_correct_count() -> None:
-    """embed_batch must return one vector per input text."""
-    config = EmbeddingProviderConfig(
-        provider="local",
-        openai_api_key=None,
-        openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
-    )
-    provider = EmbeddingsProvider(config)
-    provider._local_engine = None
-    provider._local_error = RuntimeError("no model")
-
-    texts = ["hello world", "test text", "third one"]
-    result = provider.embed_batch(texts)
-
-    assert len(result) == 3
-    assert all(len(v) == 384 for v in result)
-    # Deterministic: same batch produces same vectors
-    result2 = provider.embed_batch(texts)
-    assert result == result2
-
-
-def test_embed_batch_fallback_after_openai_failure() -> None:
-    """When OpenAI batch fails, embed_batch must fall back to local/zero."""
-    config = EmbeddingProviderConfig(
-        provider="openai",
-        openai_api_key="sk-test-batch-fail",
-        openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
-    )
-    provider = EmbeddingsProvider(config)
-    provider._local_engine = None
-    provider._local_error = RuntimeError("no model")
-
-    # Patch _embed_batch_openai to raise
-    import unittest.mock as mock
-
-    with mock.patch.object(provider, "_embed_batch_openai", side_effect=RuntimeError("API error")):
-        result = provider.embed_batch(["some text"])
-
-    assert len(result) == 1
-    assert all(v == 0.0 for v in result[0])
+    assert config.embedding_batch_size == 100

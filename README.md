@@ -211,8 +211,6 @@ Variables reservadas para integración real opcional:
 - `QDRANT_URL`
 - `QDRANT_COLLECTION` (default: `certilab-rag`)
 - `QDRANT_API_KEY`
-- `EMBEDDING_PROVIDER` (`auto` | `openai` | `local`)
-- `SENTENCE_TRANSFORMERS_MODEL`
 - `MYSQL_READONLY_DSN`
 - `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`
 - `S3_BUCKET_NAME`
@@ -238,7 +236,7 @@ Variables reservadas para integración real opcional:
 
 ## Stack real (MySQL → Qdrant)
 
-El modo real (`APP_MODE=real`) integra MySQL verificado, Qdrant y OpenAI embeddings con fallback local. Ver [`docs/real-integration.md`](docs/real-integration.md) para la guía completa.
+El modo real (`APP_MODE=real`) integra MySQL verificado, Qdrant y OpenAI embeddings. Ver [`docs/real-integration.md`](docs/real-integration.md) para la guía completa.
 
 ### Iniciar Qdrant con Docker
 
@@ -258,7 +256,7 @@ DB_USERNAME=readonly
 DB_PASSWORD=<tu-password-read-only>
 QDRANT_URL=http://localhost:6333
 QDRANT_COLLECTION=certilab-rag
-EMBEDDING_PROVIDER=auto
+OPENAI_API_KEY=<tu-openai-key>
 ```
 
 ### Variables de entorno del stack real
@@ -267,8 +265,6 @@ EMBEDDING_PROVIDER=auto
 - `QDRANT_URL` — URL del Qdrant local o cloud
 - `QDRANT_COLLECTION` — nombre de la colección (default: `certilab-rag`)
 - `QDRANT_API_KEY` — API key opcional para Qdrant Cloud
-- `EMBEDDING_PROVIDER` (`auto` | `openai` | `local`) — selección de proveedor de embeddings
-- `SENTENCE_TRANSFORMERS_MODEL` — modelo local para fallback offline (default: `all-MiniLM-L6-v2`)
 - `OPENAI_API_KEY`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_CHAT_MODEL`
 - `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`
 

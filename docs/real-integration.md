@@ -71,8 +71,6 @@ Una key ausente o inválida devuelve `401 Unauthorized`. La selección del adapt
 | URL de Qdrant | `QDRANT_URL` | — |
 | Colección Qdrant | `QDRANT_COLLECTION` (default: `certilab-rag`) | — |
 | API key de Qdrant | `QDRANT_API_KEY` (cloud) | — |
-| Proveedor de embeddings | `EMBEDDING_PROVIDER` (`auto\|openai\|local`) | — |
-| Modelo local de embeddings | `SENTENCE_TRANSFORMERS_MODEL` (default: `all-MiniLM-L6-v2`) | — |
 | DSN de MySQL | `MYSQL_READONLY_DSN` reservado para soporte futuro | — |
 | Host/puerto/base/usuario/password de MySQL | — | `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` |
 | Bucket S3 | `S3_BUCKET_NAME` | `AWS_BUCKET` |
@@ -114,20 +112,12 @@ Qdrant expone REST en `http://localhost:6333` y gRPC en `localhost:6334`. La col
 
 ### Proveedor de embeddings
 
-La selección del proveedor se controla con `EMBEDDING_PROVIDER`:
+El proveedor de embeddings es **OpenAI exclusivamente** (`text-embedding-3-small`, vectores de 1536 dimensiones). No hay proveedor local ni fallback de vector cero: si falta `OPENAI_API_KEY` o la llamada falla, el proveedor lanza una excepción y el pipeline degrada a recuperación estructurada o a una respuesta de error.
 
-| Valor | Comportamiento |
-|---|---|
-| `auto` (default) | OpenAI si hay `OPENAI_API_KEY`; si no, sentence-transformers local |
-| `openai` | OpenAI `text-embedding-3-small` (fallback a local si falta la key) |
-| `local` | sentence-transformers offline (sin red ni credenciales) |
-
-Si ambos fallan (paquete no instalado, modelo no disponible), el proveedor retorna un vector cero determinístico para que el pipeline degrade sin caer.
-
-Instalar dependencias locales:
+Instalar dependencias de integración:
 
 ```bash
-uv sync --extra dev --extra future-integrations --extra local-embeddings
+uv sync --extra dev --extra future-integrations
 ```
 
 ### Allowlist de columnas y exclusión de PII

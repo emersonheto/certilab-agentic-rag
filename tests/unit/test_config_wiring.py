@@ -131,10 +131,8 @@ def test_embedding_provider_config_has_batch_size_default() -> None:
     from app.tools.embeddings import EmbeddingProviderConfig
 
     config = EmbeddingProviderConfig(
-        provider="auto",
         openai_api_key=None,
         openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
     )
     assert config.embedding_batch_size == 100
 

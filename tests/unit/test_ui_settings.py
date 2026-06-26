@@ -451,16 +451,16 @@ class TestIndexHelpers:
         stats = _get_index_stats(settings)
         assert stats["status"] == "mock"
 
-    def test_embedding_label_returns_local_by_default(self) -> None:
-        """Without OpenAI config, label is 'local'."""
+    def test_embedding_label_returns_openai_without_key(self) -> None:
+        """OpenAI is the only provider, so the label is always 'openai'."""
         from ui.settings import _embedding_label
 
-        settings = _make_settings(embedding_provider="local", openai_api_key=None)
-        assert _embedding_label(settings) == "local"
+        settings = _make_settings(openai_api_key=None)
+        assert _embedding_label(settings) == "openai"
 
     def test_embedding_label_returns_openai_with_key(self) -> None:
-        """With API key, label resolves to 'openai'."""
+        """With an API key present the label resolves to 'openai'."""
         from ui.settings import _embedding_label
 
-        settings = _make_settings(embedding_provider="auto", openai_api_key="sk-xxx")
+        settings = _make_settings(openai_api_key="sk-xxx")
         assert _embedding_label(settings) == "openai"

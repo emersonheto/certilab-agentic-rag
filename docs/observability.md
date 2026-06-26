@@ -80,7 +80,7 @@ Los atributos útiles incluyen:
 | `rag.used_fallback` | Indica si la respuesta final usó el texto determinístico en vez de OpenAI. |
 | `rag.question_length` | Solo longitud de la pregunta; la pregunta completa no se traza intencionalmente. |
 | `rag.duration_ms` | Tiempo transcurrido aproximado del paso instrumentado. |
-| `rag.embed.provider` | Proveedor usado: `openai`, `local` o `zero_fallback`. |
+| `rag.embed.provider` | Proveedor usado (siempre `openai`). |
 | `rag.embed.vector_dim` | Dimensión del vector generado. |
 | `rag.embed.batch_size` | Cantidad de textos embebidos en lote. |
 | `rag.ingest.new_chunks` | Chunks nuevos efectivamente embebidos e insertados. |

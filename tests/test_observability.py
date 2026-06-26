@@ -220,73 +220,59 @@ class _RecordingTracer:
 # Embedding observability tests
 # ---------------------------------------------------------------------------
 
+_EMBED_TEST_CONFIG = dict(
+    openai_api_key="sk-test",
+    openai_embedding_model="text-embedding-3-small",
+)
+
+
+def _fast_embedding_provider(monkeypatch: pytest.MonkeyPatch):
+    """Create an OpenAI-only EmbeddingsProvider with the API call stubbed out."""
+
+    from app.tools.embeddings import EmbeddingsProvider, EmbeddingProviderConfig
+
+    provider = EmbeddingsProvider(EmbeddingProviderConfig(**_EMBED_TEST_CONFIG))
+    monkeypatch.setattr(provider, "_call_openai", lambda texts: [[0.0] * 1536 for _ in texts])
+    return provider
+
 
 def test_embed_works_with_failing_observability(monkeypatch: pytest.MonkeyPatch) -> None:
     """When the tracer fails, embed() must still return a correct vector."""
     from app.observability import phoenix
-    from app.tools.embeddings import EmbeddingProviderConfig, EmbeddingsProvider
 
     monkeypatch.setattr(phoenix, "_configured", True)
     monkeypatch.setattr(phoenix, "_tracer", FailingTracer())
 
-    config = EmbeddingProviderConfig(
-        provider="local",
-        openai_api_key=None,
-        openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
-    )
-    provider = EmbeddingsProvider(config)
-    provider._local_engine = None
-    provider._local_error = RuntimeError("model not available")
+    provider = _fast_embedding_provider(monkeypatch)
 
     vector = provider.embed("test text")
 
     assert isinstance(vector, list)
-    assert all(v == 0.0 for v in vector)
-    assert len(vector) == 384
+    assert len(vector) == 1536
 
 
 def test_embed_batch_works_with_failing_observability(monkeypatch: pytest.MonkeyPatch) -> None:
     """When the tracer fails, embed_batch() must still return correct vectors."""
     from app.observability import phoenix
-    from app.tools.embeddings import EmbeddingProviderConfig, EmbeddingsProvider
 
     monkeypatch.setattr(phoenix, "_configured", True)
     monkeypatch.setattr(phoenix, "_tracer", FailingTracer())
 
-    config = EmbeddingProviderConfig(
-        provider="local",
-        openai_api_key=None,
-        openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
-    )
-    provider = EmbeddingsProvider(config)
-    provider._local_engine = None
-    provider._local_error = RuntimeError("model not available")
+    provider = _fast_embedding_provider(monkeypatch)
 
     result = provider.embed_batch(["hello", "world"])
 
     assert len(result) == 2
-    assert all(len(v) == 384 for v in result)
+    assert all(len(v) == 1536 for v in result)
 
 
 def test_embed_does_not_export_text_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     """embed() span attributes must NOT contain the input text (PII safety)."""
-    from app.observability import phoenix
-    from app.tools.embeddings import EmbeddingProviderConfig, EmbeddingsProvider
 
     tracer = _RecordingTracer()
     monkeypatch.setattr(phoenix, "_tracer", tracer)
 
-    config = EmbeddingProviderConfig(
-        provider="local",
-        openai_api_key=None,
-        openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
-    )
-    provider = EmbeddingsProvider(config)
-    provider._local_engine = None
-    provider._local_error = RuntimeError("model not available")
+    provider = _fast_embedding_provider(monkeypatch)
 
     provider.embed("super secret PII text")
 
@@ -298,27 +284,17 @@ def test_embed_does_not_export_text_payload(monkeypatch: pytest.MonkeyPatch) -> 
     # Verify only expected safe attributes are present
     expected_keys = {"rag.embed.provider", "rag.embed.vector_dim", "rag.duration_ms"}
     assert set(tracer.last_span.attributes.keys()) == expected_keys
-    assert tracer.last_span.attributes["rag.embed.provider"] == "zero_fallback"
-    assert tracer.last_span.attributes["rag.embed.vector_dim"] == 384
+    assert tracer.last_span.attributes["rag.embed.provider"] == "openai"
+    assert tracer.last_span.attributes["rag.embed.vector_dim"] == 1536
 
 
 def test_embed_batch_does_not_export_text_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     """embed_batch() span attributes must NOT contain any input text (PII safety)."""
-    from app.observability import phoenix
-    from app.tools.embeddings import EmbeddingProviderConfig, EmbeddingsProvider
 
     tracer = _RecordingTracer()
     monkeypatch.setattr(phoenix, "_tracer", tracer)
 
-    config = EmbeddingProviderConfig(
-        provider="local",
-        openai_api_key=None,
-        openai_embedding_model="text-embedding-3-small",
-        sentence_transformers_model="all-MiniLM-L6-v2",
-    )
-    provider = EmbeddingsProvider(config)
-    provider._local_engine = None
-    provider._local_error = RuntimeError("model not available")
+    provider = _fast_embedding_provider(monkeypatch)
 
     provider.embed_batch(["super secret PII text", "another PII chunk"])
 
@@ -334,7 +310,7 @@ def test_embed_batch_does_not_export_text_payload(monkeypatch: pytest.MonkeyPatc
     expected_keys = {"rag.embed.batch_size", "rag.embed.provider", "rag.duration_ms"}
     assert set(batch_span.attributes.keys()) == expected_keys
     assert batch_span.attributes["rag.embed.batch_size"] == 2
-    assert batch_span.attributes["rag.embed.provider"] == "zero_fallback"
+    assert batch_span.attributes["rag.embed.provider"] == "openai"
 
 
 # ---------------------------------------------------------------------------

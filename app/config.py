@@ -70,8 +70,6 @@ class Settings(BaseSettings):
     qdrant_url: str | None = None
     qdrant_collection: str = "certilab-rag"
     qdrant_api_key: str | None = None
-    embedding_provider: Literal["auto", "openai", "local"] = "auto"
-    sentence_transformers_model: str = "all-MiniLM-L6-v2"
     mysql_readonly_dsn: str | None = None
     db_host: str | None = None
     db_port: int = 3306

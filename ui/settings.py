@@ -135,12 +135,11 @@ def _get_index_stats(settings: Settings) -> dict[str, str | int | None]:
 
 
 def _embedding_label(settings: Settings) -> str:
-    """Return a human-readable embedding provider label."""
-    if settings.embedding_provider == "local":
-        return "local"
-    if settings.embedding_provider == "openai" or settings.openai_api_key:
-        return "openai"
-    return "local"
+    """Return a human-readable embedding provider label.
+
+    OpenAI is the only supported embedding provider.
+    """
+    return "openai"
 
 
 # ── Step / display constants ────────────────────────────────────────────────
