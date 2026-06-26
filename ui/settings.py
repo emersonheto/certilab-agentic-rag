@@ -58,6 +58,22 @@ def _build_principal(profile_id: str, settings: Settings) -> Principal:
     return _principal_mock(profile_id, settings)
 
 
+def _demo_token_for_profile(profile_id: str, settings: Settings) -> str | None:
+    """Return the demo token associated with a profile (mock mode only).
+
+    Used by the Chainlit ``on_chat_start`` handler to stash the token in
+    the user session so ``on_message`` can send it in the ``X-Demo-Token``
+    header when consuming ``/ask/stream``.
+    """
+    token_map = {
+        "admin": settings.demo_admin_token,
+        "technician": settings.demo_technician_token,
+        "client_101": settings.demo_client_101_token,
+        "client_202": settings.demo_client_202_token,
+    }
+    return token_map.get(profile_id)
+
+
 def _principal_real(profile_id: str, settings: Settings) -> Principal:
     from app.security.api_key_auth import principal_from_api_key
 
@@ -207,7 +223,7 @@ def format_answer(response: AskResponse) -> str:
             ]
             if omitted:
                 lines.append(f"- *… y {omitted} fuente(s) más*")
-            parts.append(f"\n---\n📄 **Fuentes consultadas**\n" + "\n".join(lines))
+            parts.append("\n---\n📄 **Fuentes consultadas**\n" + "\n".join(lines))
         else:
             # Multiple types — group by source_type
             groups: dict[str, list[Any]] = {}

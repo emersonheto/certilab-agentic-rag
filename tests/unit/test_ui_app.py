@@ -8,8 +8,8 @@ from __future__ import annotations
 import importlib
 import sys
 from typing import Any
-from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from app.config import Settings
@@ -64,8 +64,21 @@ class _FakeStep:
 
 
 class _FakeMessage:
-    def __init__(self, content: str = "") -> None:
+    _sent: list[str] = []
+
+    def __init__(self, content: str = "", **_kwargs: Any) -> None:
         self.content = content
+
+    async def send(self) -> _FakeMessage:
+        _FakeMessage._sent.append(self.content)
+        return self
+
+    async def remove(self) -> None:
+        pass
+
+    @classmethod
+    def reset(cls) -> None:
+        cls._sent.clear()
 
 
 class _FakeChatProfile:
@@ -205,76 +218,126 @@ class TestAppModule:
         assert hasattr(mod, "main"), "main handler must exist"
 
 
-# ── _route_label ──────────────────────────────────────────────────────────────
+# ── _ask_stream consumer integration ──────────────────────────────────────────
 
 
-class TestRouteLabel:
-    """Verify ``_route_label()`` returns expected labels for routes."""
+class TestOnMessageConsumer:
+    """Verify ``on_message`` uses the SSE ``ask_stream`` consumer correctly."""
 
-    def test_structured_route_label(self) -> None:
-        """``_route_label('structured')`` returns ``📊 Ruta: estructurada``."""
-        from ui.chainlit_app import _route_label
-
-        result = _route_label("structured")
-        assert result == "📊 Ruta: estructurada"
-
-    def test_semantic_route_label(self) -> None:
-        """``_route_label('semantic')`` returns ``🔬 Ruta: semántica``."""
-        from ui.chainlit_app import _route_label
-
-        result = _route_label("semantic")
-        assert result == "🔬 Ruta: semántica"
-
-    def test_combined_route_label(self) -> None:
-        """``_route_label('combined')`` returns ``🔄 Ruta: combinada``."""
-        from ui.chainlit_app import _route_label
-
-        result = _route_label("combined")
-        assert result == "🔄 Ruta: combinada"
-
-    def test_web_search_route_label(self) -> None:
-        """``_route_label('web_search')`` returns ``🌐 Ruta: búsqueda web``."""
-        from ui.chainlit_app import _route_label
-
-        result = _route_label("web_search")
-        assert result == "🌐 Ruta: búsqueda web"
-
-    def test_unknown_route_fallback(self) -> None:
-        """Unknown route returns ``📌 Ruta: {name}`` fallback."""
-        from ui.chainlit_app import _route_label
-
-        result = _route_label("custom_route")
-        assert result == "📌 Ruta: custom_route"
-
-    def test_route_label_is_case_sensitive(self) -> None:
-        """Case mismatch does NOT match — falls back to generic label.
-
-        This triangulates that the lookup is an exact dict match, not a
-        case-insensitive comparison.
-        """
-        from ui.chainlit_app import _route_label
-
-        result = _route_label("Structured")
-        assert result == "📌 Ruta: Structured", "Must use fallback for wrong case"
-
-
-# ── _get_client ───────────────────────────────────────────────────────────────
-
-
-class TestGetClient:
-    """Verify ``_get_client()`` resolves or fails correctly."""
-
-    def test_get_client_raises_without_principal(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``_get_client()`` raises ``RuntimeError`` when no principal in session."""
-        # Purge real chainlit module so the fake takes effect
-        sys.modules.pop("chainlit", None)
+    @pytest.fixture(autouse=True)
+    def _patch_chainlit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _FakeStep.reset()
+        FakeChainlitModule.user_session._store.clear()
         monkeypatch.setitem(sys.modules, "chainlit", FakeChainlitModule())
         sys.modules.pop("ui.chainlit_app", None)
 
-        from ui.chainlit_app import _get_client
+    async def test_on_message_calls_ask_stream_with_question(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``on_message`` forwards the user question to ``ask_stream``."""
+        import ui.chainlit_app as _app
 
-        with pytest.raises(RuntimeError, match="Sin sesión activa"):
-            _get_client()
+        from app.domain.models import Role
+        from app.security.access_control import Principal
+
+        principal = Principal(role=Role.ADMIN, customer_id=None, user_id=1)
+        FakeChainlitModule.user_session.set("principal", principal)
+        FakeChainlitModule.user_session.set("demo_token", "tok")
+
+        captured: dict[str, Any] = {}
+
+        async def fake_ask_stream(**kwargs: Any) -> None:
+            captured.update(kwargs)
+            await kwargs["on_event"]({"event": "complete", "answer": "x", "route": "structured", "sources": []})
+
+        monkeypatch.setattr(_app, "ask_stream", fake_ask_stream)
+
+        await _app.main(_FakeMessage(content="¿Cuántos hay?"))
+
+        assert captured["question"] == "¿Cuántos hay?"
+
+    async def test_on_message_renders_answer_on_complete(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A ``complete`` event produces a formatted answer message."""
+        import ui.chainlit_app as _app
+
+        from app.domain.models import Role
+        from app.security.access_control import Principal
+
+        principal = Principal(role=Role.ADMIN, customer_id=None, user_id=1)
+        FakeChainlitModule.user_session.set("principal", principal)
+        FakeChainlitModule.user_session.set("demo_token", "tok")
+
+        _FakeMessage.reset()
+
+        async def fake_ask_stream(**kwargs: Any) -> None:
+            await kwargs["on_event"]({
+                "event": "complete",
+                "answer": "Hay 42 certificados.",
+                "route": "structured",
+                "sources": [],
+            })
+
+        monkeypatch.setattr(_app, "ask_stream", fake_ask_stream)
+
+        await _app.main(_FakeMessage(content="pregunta"))
+
+        assert any("42 certificados" in m for m in _FakeMessage._sent)
+
+    async def test_on_message_step_closes_on_stream_failure(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When ``ask_stream`` raises an unexpected error, the step still closes.
+
+        ``httpx.HTTPError`` is caught gracefully, but other exceptions
+        propagate while the ``cl.Step`` context manager still closes.
+        """
+        import ui.chainlit_app as _app
+
+        from app.domain.models import Role
+        from app.security.access_control import Principal
+
+        principal = Principal(role=Role.ADMIN, customer_id=None, user_id=1)
+        FakeChainlitModule.user_session.set("principal", principal)
+        FakeChainlitModule.user_session.set("demo_token", "tok")
+
+        async def failing_ask_stream(**kwargs: Any) -> None:
+            raise RuntimeError("Stream failed")
+
+        monkeypatch.setattr(_app, "ask_stream", failing_ask_stream)
+
+        with pytest.raises(RuntimeError, match="Stream failed"):
+            await _app.main(_FakeMessage(content="test query"))
+
+        assert len(_FakeStep.instances) == 1
+        step = _FakeStep.instances[0]
+        assert step.opened is True, "Step was opened before the exception"
+        assert step.closed is True, "Step was closed even on exception"
+
+    async def test_on_message_graceful_on_http_error(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``httpx.HTTPError`` is caught — user sees an error message, no crash."""
+        import ui.chainlit_app as _app
+
+        from app.domain.models import Role
+        from app.security.access_control import Principal
+
+        principal = Principal(role=Role.ADMIN, customer_id=None, user_id=1)
+        FakeChainlitModule.user_session.set("principal", principal)
+        FakeChainlitModule.user_session.set("demo_token", "tok")
+
+        async def failing_ask_stream(**kwargs: Any) -> None:
+            raise httpx.ConnectError("connection refused")
+
+        monkeypatch.setattr(_app, "ask_stream", failing_ask_stream)
+
+        # Should NOT raise
+        await _app.main(_FakeMessage(content="test query"))
+
+        assert len(_FakeStep.instances) == 1
+        assert _FakeStep.instances[0].closed is True
 
 
 # ── handler structure ─────────────────────────────────────────────────────────
@@ -451,45 +514,3 @@ class TestStepBehavior:
         assert len(_FakeStep.instances) == 2
         assert _FakeStep.instances[0].name == "a"
         assert _FakeStep.instances[1].name == "b"
-
-    # ── Step-on-phase-failure (WARNING-2) ─────────────────────────────────
-
-    async def test_on_message_step_closes_on_phase_failure(
-        self, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """When a pipeline phase raises, steps still close properly.
-
-        Inject an exception into ``client.route()``, call the ``main``
-        handler, and verify:
-        - The exception propagates (not swallowed)
-        - The ``cl.Step`` was opened AND closed (not left hanging)
-        """
-        _FakeStep.reset()
-
-        # Set up fake chainlit and import ui.chainlit_app first
-        monkeypatch.setitem(sys.modules, "chainlit", FakeChainlitModule())
-        sys.modules.pop("ui.chainlit_app", None)
-        import ui.chainlit_app as _app
-
-        # Set up session with a principal so we get past the guard
-        from app.security.access_control import Principal
-        from app.domain.models import Role
-
-        principal = Principal(role=Role.ADMIN, customer_id=None, user_id=1)
-        FakeChainlitModule.user_session.set("principal", principal)
-
-        # Mock _get_client so that route() raises
-        mock_client = AsyncMock()
-        mock_client.route.side_effect = RuntimeError("Route phase failed")
-        monkeypatch.setattr(_app, "_get_client", lambda: mock_client)
-
-        message = _FakeMessage(content="test query")
-
-        with pytest.raises(RuntimeError, match="Route phase failed"):
-            await _app.main(message)
-
-        # The route step should have been opened and then closed on exception
-        assert len(_FakeStep.instances) == 1
-        step = _FakeStep.instances[0]
-        assert step.opened is True, "Step was opened before the exception"
-        assert step.closed is True, "Step was closed even on exception"

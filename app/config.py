@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     graph_engine: Literal["deterministic", "langgraph"] = "langgraph"
     data_dir: Path = Field(default=Path("data"))
     default_top_k: int = DEFAULT_RETRIEVAL_TOP_K
+    api_url: str = Field(default="http://localhost:8000", alias="API_URL")
 
     demo_admin_token: str | None = None
     demo_technician_token: str | None = None

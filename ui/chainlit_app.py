@@ -1,9 +1,9 @@
 """Chainlit application handlers for the Certilab RAG chat UI.
 
 This module registers all Chainlit lifecycle handlers: chat profiles,
-chat start, starter questions, on_message (the main Q&A handler with
-progressive ``cl.Step`` per pipeline phase), and admin action callbacks
-(reindex, evaluate, refresh status).
+chat start, starter questions, ``on_message`` (the main Q&A handler that
+consumes SSE events from the backend ``/ask/stream`` endpoint via a single
+``cl.Step``), and admin action callbacks (reindex, evaluate, refresh status).
 
 Usage
 -----
@@ -18,18 +18,20 @@ from __future__ import annotations
 import asyncio
 from time import perf_counter
 
+import httpx
+
 from app.config import get_settings
 from app.graph import build_rag_pipeline
-from app.schemas import AskResponse
+from app.schemas import AskResponse, Source
 from app.security.access_control import Principal
 
-from ui.client import PipelineClient
+from ui.client import ask_stream
 from ui.settings import (
     _build_principal,
+    _demo_token_for_profile,
     _embedding_label,
     _get_index_stats,
     _PROFILES,
-    ROUTE_LABELS,
     format_answer,
 )
 
@@ -37,38 +39,6 @@ try:
     import chainlit as cl
 except ImportError:  # pragma: no cover
     cl = None  # type: ignore[assignment]
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _route_label(route_name: str) -> str:
-    """Return the human-readable label for a pipeline route name.
-
-    Args:
-        route_name: The internal route name (e.g. ``"structured"``).
-
-    Returns:
-        A markdown label with emoji (e.g. ``"📊 Ruta: estructurada"``).
-    """
-    return ROUTE_LABELS.get(route_name, f"📌 Ruta: {route_name}")
-
-
-def _get_client() -> PipelineClient:
-    """Build a ``PipelineClient`` for the current session's principal.
-
-    Returns:
-        A ready-to-use ``PipelineClient`` instance.
-
-    Raises:
-        RuntimeError: If no ``principal`` is stored in the Chainlit session.
-    """
-    principal: Principal | None = cl.user_session.get("principal")
-    if principal is None:
-        raise RuntimeError("Sin sesión activa. Recargá la página y elegí un perfil.")
-    settings = get_settings()
-    pipeline = build_rag_pipeline(settings)
-    return PipelineClient(pipeline, principal)
 
 
 # ── Chainlit handlers ─────────────────────────────────────────────────────────
@@ -112,6 +82,7 @@ if cl is not None:
         try:
             principal = _build_principal(profile_id, settings)
             cl.user_session.set("principal", principal)
+            cl.user_session.set("demo_token", _demo_token_for_profile(profile_id, settings))
             role_label = principal.role.value.capitalize()
             cid = f" · cliente {principal.customer_id}" if principal.customer_id else ""
 
@@ -156,36 +127,51 @@ if cl is not None:
             await cl.Message(content="⚠️ Sin sesión activa. Recargá la página y elegí un perfil.").send()
             return
 
-        client = _get_client()
+        settings = get_settings()
+        token = str(cl.user_session.get("demo_token") or "")
+        header_name = "X-API-Key" if settings.app_mode == "real" else "X-Demo-Token"
 
-        # Phase 1: Route
-        async with cl.Step(name="🧭 Enrutando consulta") as step:
+        final_response: AskResponse | None = None
+        error_message: str | None = None
+
+        async with cl.Step(name="🤖 Procesando consulta") as step:
             step.output = "Analizando la pregunta..."
-            route = await client.route(message.content)
-            step.output = f"Ruta seleccionada: {_route_label(route)}"
 
-        # Short-circuit for off-topic: don't retrieve or generate
-        if route == "off_topic":
-            from app.pipeline.guards import OFF_TOPIC_ANSWER
-            await cl.Message(content=OFF_TOPIC_ANSWER).send()
-            return
+            async def on_event(event: dict[str, object]) -> None:
+                nonlocal final_response, error_message
+                evt = event.get("event")
+                if evt == "start":
+                    step.output = "Procesando..."
+                elif evt == "complete":
+                    final_response = AskResponse(
+                        answer=str(event.get("answer", "")),
+                        route=str(event.get("route", "off_topic")),  # type: ignore[arg-type]
+                        sources=[Source(**s) for s in event.get("sources", [])],  # type: ignore[arg-type]
+                    )
+                    step.output = "Respuesta lista"
+                elif evt == "error":
+                    error_message = str(event.get("error", "Error desconocido"))
+                    step.output = f"⚠️ {error_message}"
 
-        # Phase 2: Retrieve
-        async with cl.Step(name="🔍 Recuperando fuentes") as step:
-            step.output = "Buscando información relevante..."
-            fallback_answer, sources = await client.retrieve(message.content, route)
-            step.output = f"{len(sources)} fuentes encontradas"
+            try:
+                await ask_stream(
+                    question=message.content,
+                    token=token,
+                    api_url=settings.api_url,
+                    on_event=on_event,
+                    token_header=header_name,
+                )
+            except httpx.HTTPError:
+                error_message = "No se pudo conectar con el servidor."
+                step.output = f"⚠️ {error_message}"
 
-        # Phase 3: Generate
-        async with cl.Step(name="✍️ Generando respuesta") as step:
-            step.output = "Procesando..."
-            answer = await client.generate(message.content, sources, fallback_answer)
-            step.output = "Respuesta lista"
-
-        # Final message with rich formatting
-        response = AskResponse(answer=answer, route=route, sources=sources)
-        formatted = format_answer(response)
-        await cl.Message(content=formatted).send()
+        if final_response is not None:
+            formatted = format_answer(final_response)
+            await cl.Message(content=formatted).send()
+        elif error_message is not None:
+            await cl.Message(content=f"⚠️ {error_message}").send()
+        else:
+            await cl.Message(content="⚠️ No se pudo procesar la consulta.").send()
 
     @cl.action_callback("reindex")
     async def on_reindex(action: cl.Action) -> None:

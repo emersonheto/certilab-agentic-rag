@@ -1,9 +1,13 @@
+import asyncio
+import json
 import time
 import uuid
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi.responses import StreamingResponse
 
 from app.config import Settings
 from app.config import get_settings
@@ -70,6 +74,25 @@ def create_app() -> FastAPI:
             logger.exception("api.ask.error")
             raise
 
+    @app.post("/ask/stream", tags=["rag"])
+    async def ask_stream(
+        payload: AskRequest,
+        principal: Annotated[Principal, Depends(get_principal)],
+    ) -> StreamingResponse:
+        """Stream the atomic ``pipeline.ask()`` result as Server-Sent Events.
+
+        Emits ``start`` immediately, then ``complete`` (with the full
+        :class:`AskResponse` payload) or ``error`` once the pipeline
+        finishes. The pipeline itself is identical to ``/ask`` — all
+        routing, off-topic, scope, and RBAC guards live there — so the UI
+        consuming this stream cannot reintroduce the bugs the old
+        in-process ``PipelineClient`` caused.
+        """
+        return StreamingResponse(
+            _ask_stream_events(payload, principal, settings),
+            media_type="text/event-stream",
+        )
+
     @app.post("/admin/reindex", response_model=ReindexResponse, tags=["admin"])
     async def admin_reindex(principal: Annotated[Principal, Depends(get_principal)]) -> ReindexResponse:
         if principal.role is not Role.ADMIN:
@@ -105,7 +128,6 @@ def create_app() -> FastAPI:
         if not settings.phoenix_enabled:
             return EvaluateResponse(status="ok", evaluated=0, experiment_id="")
 
-        import asyncio
         from concurrent.futures import ThreadPoolExecutor
         from time import perf_counter
 
@@ -129,6 +151,51 @@ def _run_eval_sync(settings: Settings) -> dict:
     from app.eval import run_evaluation
 
     return run_evaluation(settings)
+
+
+def _sse(event: dict[str, object]) -> str:
+    """Format a single SSE ``data:`` line from a dict payload."""
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+async def _ask_stream_events(
+    payload: AskRequest,
+    principal: Principal,
+    settings: Settings,
+) -> AsyncIterator[str]:
+    """Yield SSE events for the streaming ask endpoint.
+
+    Emits ``start`` immediately, then runs the atomic
+    ``pipeline.ask()`` in a worker thread (non-blocking) and emits
+    ``complete`` or ``error``.
+    """
+    yield _sse({"event": "start", "question_length": len(payload.question)})
+    try:
+        response = await asyncio.to_thread(
+            get_pipeline(settings).ask, payload.question, principal,
+        )
+    except AccessDeniedError as exc:
+        logger.warning("api.ask_stream.access_denied")
+        yield _sse({"event": "error", "error": str(exc)})
+        return
+    except Exception:
+        logger.exception("api.ask_stream.error")
+        yield _sse({"event": "error", "error": "Error interno del servidor"})
+        return
+
+    logger.info(
+        "api.ask_stream.complete",
+        route=response.route,
+        source_count=len(response.sources),
+    )
+    yield _sse(
+        {
+            "event": "complete",
+            "route": response.route,
+            "answer": response.answer,
+            "sources": [source.model_dump() for source in response.sources],
+        },
+    )
 
 
 _pipeline_cache: RagPipeline | None = None
