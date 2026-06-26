@@ -10,6 +10,10 @@ from __future__ import annotations
 
 import re
 
+from app.logging import get_logger
+
+logger = get_logger("pipeline.guards")
+
 
 # ── Off-topic detection ─────────────────────────────────────────────────
 
@@ -52,17 +56,12 @@ def _check_off_topic(question: str) -> bool:
         if keyword in normalized:
             return False
 
-    # Pure math (no domain keywords — guard already passed above)
-    if _OFF_TOPIC_MATH_RE.match(question):
-        return True
-
-    # Greetings (exact match — full question is just a greeting)
-    if normalized in _OFF_TOPIC_GREETINGS:
-        return True
-
-    # Off-domain keywords (substring — "clima" in "qué es el clima hoy")
-    for keyword in _OFF_TOPIC_KEYWORDS:
-        if keyword in normalized:
-            return True
-
-    return False
+    # Pure math, greetings, or off-domain keywords
+    is_off_topic = (
+        bool(_OFF_TOPIC_MATH_RE.match(question))
+        or normalized in _OFF_TOPIC_GREETINGS
+        or any(keyword in normalized for keyword in _OFF_TOPIC_KEYWORDS)
+    )
+    if is_off_topic:
+        logger.info("guards.off_topic.detected", question_length=len(question))
+    return is_off_topic

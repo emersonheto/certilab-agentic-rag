@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.domain.models import DocumentChunk
+from app.logging import get_logger
 from app.observability import trace_span
+
+logger = get_logger("retrieval.qdrant")
 
 
 class EmbeddingProviderProtocol(Protocol):
@@ -117,11 +120,13 @@ class QdrantVectorIndex:
         """
 
         started_at = time.perf_counter()
+        logger.info("qdrant.upsert.start", total_chunks=len(chunks))
         with trace_span("rag.ingest.upsert") as span:
             if not chunks:
                 span.set_attribute("rag.ingest.new_chunks", 0)
                 span.set_attribute("rag.ingest.skipped_chunks", 0)
                 span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+                logger.info("qdrant.upsert.complete", new_chunks=0, skipped=0, duration_ms=int((time.perf_counter() - started_at) * 1000))
                 return
 
             # Compute deterministic UUIDs for all chunks
@@ -146,6 +151,7 @@ class QdrantVectorIndex:
                 span.set_attribute("rag.ingest.new_chunks", 0)
                 span.set_attribute("rag.ingest.skipped_chunks", skipped_count)
                 span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+                logger.info("qdrant.upsert.complete", new_chunks=0, skipped=skipped_count, duration_ms=int((time.perf_counter() - started_at) * 1000))
                 return
 
             # Batch embed all new chunks at once
@@ -177,6 +183,7 @@ class QdrantVectorIndex:
             span.set_attribute("rag.ingest.new_chunks", len(new_chunks))
             span.set_attribute("rag.ingest.skipped_chunks", skipped_count)
             span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+            logger.info("qdrant.upsert.complete", new_chunks=len(new_chunks), skipped=skipped_count, duration_ms=int((time.perf_counter() - started_at) * 1000))
 
     def search(
         self, query: str, allowed_customer_ids: set[int] | None, top_k: int
@@ -191,7 +198,12 @@ class QdrantVectorIndex:
         Returns ``(chunk_id, score, payload)`` triples.
         """
 
+        started_at = time.perf_counter()
+        allowed_count = len(allowed_customer_ids) if allowed_customer_ids is not None else 0
+        logger.debug("qdrant.search.start", top_k=top_k, allowed_count=allowed_count)
+
         if allowed_customer_ids is not None and not allowed_customer_ids:
+            logger.debug("qdrant.search.complete", results=0, duration_ms=int((time.perf_counter() - started_at) * 1000))
             return []  # fail-closed for empty scope
 
         query_vector = self._embedding_provider.embed(query)
@@ -214,10 +226,12 @@ class QdrantVectorIndex:
             limit=top_k,
             with_payload=True,
         )
-        return [
+        result = [
             (point.payload.get("chunk_id", str(point.id)), float(point.score), point.payload)
             for point in response.points
         ]
+        logger.debug("qdrant.search.complete", results=len(result), duration_ms=int((time.perf_counter() - started_at) * 1000))
+        return result
 
     def get_stats(self) -> dict[str, Any]:
         """Return collection statistics for ingestion tracking."""

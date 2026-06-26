@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.config import Settings
+from app.logging import get_logger
 from app.observability import trace_span
+
+logger = get_logger("tools.embeddings")
 
 # OpenAI text-embedding-3-small output dimension.
 _OPENAI_EMBEDDING_DIM = 1536
@@ -63,10 +66,13 @@ class EmbeddingsProvider:
 
         started_at = time.perf_counter()
         with trace_span("rag.embed") as span:
+            logger.info("embeddings.embed.start")
             result = self._call_openai([text])
             span.set_attribute("rag.embed.provider", "openai")
             span.set_attribute("rag.embed.vector_dim", len(result[0]))
-            span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            span.set_attribute("rag.duration_ms", duration_ms)
+            logger.info("embeddings.embed.complete", duration_ms=duration_ms)
             return result[0]
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
@@ -74,14 +80,17 @@ class EmbeddingsProvider:
 
         started_at = time.perf_counter()
         with trace_span("rag.embed_batch") as span:
+            logger.info("embeddings.batch.start", batch_size=len(texts))
             span.set_attribute("rag.embed.batch_size", len(texts))
             if not texts:
                 span.set_attribute("rag.embed.provider", "openai")
                 span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+                logger.info("embeddings.batch.complete", batch_size=0, duration_ms=int((time.perf_counter() - started_at) * 1000))
                 return []
             result = self._call_openai(texts)
             span.set_attribute("rag.embed.provider", "openai")
             span.set_attribute("rag.duration_ms", int((time.perf_counter() - started_at) * 1000))
+            logger.info("embeddings.batch.complete", batch_size=len(texts), duration_ms=int((time.perf_counter() - started_at) * 1000))
             return result
 
     def _call_openai(self, texts: list[str]) -> list[list[float]]:

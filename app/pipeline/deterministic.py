@@ -24,6 +24,7 @@ from app.ingestion.loader import (
     load_pdf_texts,
 )
 from app.ingestion.splitter import build_pdf_chunks
+from app.logging import get_logger
 from app.observability import trace_span
 from app.pipeline.guards import OFF_TOPIC_ANSWER, _check_off_topic
 from app.pipeline.utils import (
@@ -48,6 +49,8 @@ from app.security.access_control import (
 )
 from app.tools.openai_client import AnswerGenerator
 from app.tools.web_search import TavilyWebSearch, WebSearchConfig
+
+logger = get_logger("pipeline.deterministic")
 
 
 class CertilabRagPipeline:
@@ -103,6 +106,7 @@ class CertilabRagPipeline:
 
         # Early exit for off-topic questions (greetings, math, off-domain)
         if _check_off_topic(question):
+            logger.info("pipeline.off_topic")
             return AskResponse(route="off_topic", answer=OFF_TOPIC_ANSWER, sources=[])
 
         # Scope narrowing: if question mentions a specific customer, narrow the
@@ -129,6 +133,9 @@ class CertilabRagPipeline:
             },
         ) as span:
             route = self._route_question(question)
+            logger.info("pipeline.route", route=route)
+            logger.info("pipeline.retrieve.start", route=route)
+            retrieve_started = perf_counter()
             if route == "structured":
                 answer, sources = self._retrieve_structured(question, scope)
             elif route == "semantic":
@@ -137,9 +144,13 @@ class CertilabRagPipeline:
                 answer, sources = self._retrieve_web(question)
             else:
                 answer, sources = self._combined(question, scope)
+            logger.info("pipeline.retrieve.complete", source_count=len(sources), duration_ms=int((perf_counter() - retrieve_started) * 1000))
 
             unique_sources = _dedupe_sources(sources)
+            logger.info("pipeline.generate.start")
+            generate_started = perf_counter()
             answer = self._generate_answer(question, unique_sources, answer, scope)
+            logger.info("pipeline.generate.complete", used_openai=self._answer_generator is not None, duration_ms=int((perf_counter() - generate_started) * 1000))
             span.set_attribute("rag.route", route)
             span.set_attribute("rag.source_count", len(unique_sources))
             span.set_attribute("rag.certificate_count", _certificate_count(unique_sources))

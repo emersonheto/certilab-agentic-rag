@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     phoenix_project_name: str = "certilab-agentic-rag"
     phoenix_collector_endpoint: str = "http://localhost:6006/v1/traces"
 
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    log_json: bool = Field(default=False, alias="LOG_JSON")
+
 
 @lru_cache
 def get_settings() -> Settings:

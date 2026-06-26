@@ -1,19 +1,22 @@
-import logging
+import time
+import uuid
 from typing import Annotated
 
+import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 
 from app.config import Settings
 from app.config import get_settings
-from app.graph import RagPipeline, build_rag_pipeline
 from app.domain.models import Role
+from app.graph import RagPipeline, build_rag_pipeline
+from app.logging import configure_logging, get_logger
 from app.observability import configure_observability
 from app.schemas import AskRequest, AskResponse, EvaluateResponse, HealthResponse, ReindexResponse
 from app.security.access_control import AccessDeniedError, Principal
 from app.security.api_key_auth import get_api_key_principal
 from app.security.demo_auth import get_demo_principal
 
-logger = logging.getLogger(__name__)
+logger = get_logger("api")
 
 
 async def get_principal(
@@ -36,6 +39,7 @@ async def get_principal(
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    configure_logging(level=settings.log_level, json=settings.log_json)
     _configure_optional_observability(settings)
     app = FastAPI(title=settings.app_name, version="0.1.0")
 
@@ -45,10 +49,26 @@ def create_app() -> FastAPI:
 
     @app.post("/ask", response_model=AskResponse, tags=["rag"])
     async def ask(payload: AskRequest, principal: Annotated[Principal, Depends(get_principal)]) -> AskResponse:
+        request_id = str(uuid.uuid4())[:8]
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            request_id=request_id,
+            role=principal.role.value,
+            question_length=len(payload.question),
+        )
+        logger.info("api.ask.start")
         try:
-            return get_pipeline(settings).ask(payload.question, principal)
+            started = time.perf_counter()
+            response = get_pipeline(settings).ask(payload.question, principal)
+            elapsed = int((time.perf_counter() - started) * 1000)
+            logger.info("api.ask.complete", route=response.route, source_count=len(response.sources), duration_ms=elapsed)
+            return response
         except AccessDeniedError as exc:
+            logger.warning("api.ask.access_denied")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        except Exception:
+            logger.exception("api.ask.error")
+            raise
 
     @app.post("/admin/reindex", response_model=ReindexResponse, tags=["admin"])
     async def admin_reindex(principal: Annotated[Principal, Depends(get_principal)]) -> ReindexResponse:
@@ -94,7 +114,7 @@ def create_app() -> FastAPI:
         with ThreadPoolExecutor(max_workers=1) as pool:
             summary = await loop.run_in_executor(pool, _run_eval_sync, settings)
         elapsed = (perf_counter() - started_at) * 1000
-        logger.info("Evaluation completed in %.0f ms — %d test case(s).", elapsed, summary["evaluated"])
+        logger.info("admin.evaluate.complete", duration_ms=round(elapsed), test_cases=summary["evaluated"])
         return EvaluateResponse(
             status="ok",
             evaluated=summary["evaluated"],

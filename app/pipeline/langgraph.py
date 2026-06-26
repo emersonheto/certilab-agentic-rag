@@ -27,6 +27,7 @@ from app.ingestion.loader import (
     load_pdf_texts,
 )
 from app.ingestion.splitter import build_pdf_chunks
+from app.logging import get_logger
 from app.observability import trace_span
 from app.pipeline.guards import OFF_TOPIC_ANSWER, _check_off_topic
 from app.pipeline.utils import (
@@ -51,6 +52,8 @@ from app.security.access_control import (
 )
 from app.tools.openai_client import AnswerGenerator
 from app.tools.web_search import TavilyWebSearch, WebSearchConfig, WebSearchResult
+
+logger = get_logger("pipeline.langgraph")
 
 
 class CertilabGraphState(TypedDict):
@@ -125,6 +128,7 @@ class CertilabLangGraphPipeline:
     def ask(self, question: str, principal: Principal) -> AskResponse:
         # Off-topic early exit (greetings, math, off-domain)
         if _check_off_topic(question):
+            logger.info("pipeline.off_topic")
             return AskResponse(route="off_topic", answer=OFF_TOPIC_ANSWER, sources=[])
 
         scope = scope_from_principal(principal)
@@ -147,9 +151,16 @@ class CertilabLangGraphPipeline:
                 "rag.question_length": len(question),
             },
         ) as span:
+            logger.info("pipeline.retrieve.start")
+            logger.info("pipeline.generate.start")
+            invoke_started = perf_counter()
             final_state = self._graph.invoke(_initial_state(question, principal, scope))
+            invoke_ms = int((perf_counter() - invoke_started) * 1000)
             sources = _dedupe_sources(final_state["sources"])
             route = final_state["route"]
+            logger.info("pipeline.route", route=route)
+            logger.info("pipeline.retrieve.complete", source_count=len(sources), duration_ms=invoke_ms)
+            logger.info("pipeline.generate.complete", used_openai=self._answer_generator is not None, duration_ms=invoke_ms)
             span.set_attribute("rag.engine", "langgraph")
             span.set_attribute("rag.route", route)
             span.set_attribute("rag.source_count", len(sources))

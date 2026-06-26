@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 
 from app.config import Settings
 from app.domain.models import RetrievedSource
+from app.logging import get_logger
 from app.security.payload_sanitizer import summarize_sources_for_external_payload
+
+logger = get_logger("tools.openai")
 
 SYSTEM_PROMPT = (
     "You are Certilab Assistant. A deterministic pipeline has retrieved verified "
@@ -100,9 +104,12 @@ class AnswerGenerator:
 
         if self._settings.app_mode != "real" or not self._settings.openai_api_key:
             return fallback_answer
+        model = self._adapter.chat_model
         try:
+            logger.info("openai.generate.start", model=model)
+            started = time.perf_counter()
             response = self._adapter.client().chat.completions.create(
-                model=self._adapter.chat_model,
+                model=model,
                 messages=[
                     {
                         "role": "system",
@@ -115,7 +122,10 @@ class AnswerGenerator:
                 ],
                 temperature=self._settings.openai_temperature,
             )
+            elapsed = int((time.perf_counter() - started) * 1000)
+            logger.info("openai.generate.complete", model=model, duration_ms=elapsed)
         except Exception:
+            logger.warning("openai.generate.fallback")
             return fallback_answer
         content = response.choices[0].message.content if response.choices else None
         return content.strip() if isinstance(content, str) and content.strip() else fallback_answer
