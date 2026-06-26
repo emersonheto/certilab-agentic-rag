@@ -2,6 +2,10 @@ from app.domain.models import Certificate, CertificateHistory, Customer, Retriev
 from app.retrieval.query import extract_certificate_code
 from app.security.access_control import AccessScope, filter_certificates
 
+# Maximum certificates returned in a listing response.
+# Prevents overwhelming the LLM context and the UI with hundreds of items.
+_MAX_LISTING_RESULTS = 20
+
 
 class StructuredRetriever:
     """Tenant-aware lookup over anonymized certificate metadata."""
@@ -47,12 +51,17 @@ class StructuredRetriever:
     def _answer_listing(self, certificates: list[Certificate]) -> tuple[str, list[RetrievedSource]]:
         if not certificates:
             return "No hay certificados visibles para el alcance consultado.", []
+        total = len(certificates)
+        capped = certificates[:_MAX_LISTING_RESULTS]
         lines = []
-        for certificate in certificates:
+        for certificate in capped:
             customer = self._customers.get(certificate.customer_id)
             customer_name = customer.name if customer else f"Cliente {certificate.customer_id}"
             lines.append(f"{certificate.code}: {certificate.status}, emitido el {certificate.emitted_at.isoformat()}, cliente {customer_name}.")
-        return " ".join(lines), [self._source_from_certificate(certificate) for certificate in certificates]
+        if total > _MAX_LISTING_RESULTS:
+            omitted = total - _MAX_LISTING_RESULTS
+            lines.append(f"... y {omitted} certificado(s) más no mostrados.")
+        return " ".join(lines), [self._source_from_certificate(c) for c in capped]
 
     def _source_from_certificate(self, certificate: Certificate) -> RetrievedSource:
         histories = self._histories_by_certificate.get(certificate.id, [])

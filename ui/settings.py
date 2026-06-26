@@ -161,8 +161,14 @@ ROUTE_LABELS: dict[str, str] = {
 # ── Answer formatting ────────────────────────────────────────────────────────
 
 
+_MAX_DISPLAYED_SOURCES = 8
+
+
 def format_answer(response: AskResponse) -> str:
     """Build the final markdown answer with a route indicator and source list.
+
+    Displays up to ``_MAX_DISPLAYED_SOURCES`` sources. When the pipeline
+    returns more, a summary line indicates how many are omitted.
 
     Args:
         response: The pipeline response containing answer, route, and sources.
@@ -179,26 +185,33 @@ def format_answer(response: AskResponse) -> str:
     # Answer body
     parts.append(response.answer)
 
-    # Source list — group by type when multiple source types are present
+    # Source list — capped at _MAX_DISPLAYED_SOURCES, grouped by type when mixed
     if response.sources:
-        source_types = {s.source_type for s in response.sources}
+        total = len(response.sources)
+        displayed = response.sources[:_MAX_DISPLAYED_SOURCES]
+        omitted = total - len(displayed)
+
+        source_types = {s.source_type for s in displayed}
+        type_headers: dict[str, str] = {
+            "structured": "📋 **Datos estructurados**",
+            "metadata": "📋 **Datos estructurados**",
+            "pdf_text": "📄 **Documentos PDF**",
+            "web": "🌐 **Resultados web**",
+        }
 
         if len(source_types) == 1:
-            # Single type — flat list (original behavior)
-            source_lines = "\n".join(
+            # Single type — flat list
+            lines = [
                 f"- **{s.code or s.certificate_id}** · cliente {s.customer_id}"
-                for s in response.sources
-            )
-            parts.append(f"\n---\n📄 **Fuentes consultadas**\n{source_lines}")
+                for s in displayed
+            ]
+            if omitted:
+                lines.append(f"- *… y {omitted} fuente(s) más*")
+            parts.append(f"\n---\n📄 **Fuentes consultadas**\n" + "\n".join(lines))
         else:
-            # Multiple types — group by source_type with type-specific headers
-            type_headers: dict[str, str] = {
-                "structured": "📋 **Datos estructurados**",
-                "pdf_text": "📄 **Documentos PDF**",
-                "web": "🌐 **Resultados web**",
-            }
+            # Multiple types — group by source_type
             groups: dict[str, list[Any]] = {}
-            for s in response.sources:
+            for s in displayed:
                 groups.setdefault(s.source_type, []).append(s)
 
             group_lines: list[str] = []
@@ -209,6 +222,8 @@ def format_answer(response: AskResponse) -> str:
                     group_lines.append(
                         f"- **{s.code or s.certificate_id}** · cliente {s.customer_id}",
                     )
+            if omitted:
+                group_lines.append(f"*… y {omitted} fuente(s) más*")
 
             parts.append("\n---\n" + "\n".join(group_lines))
 
