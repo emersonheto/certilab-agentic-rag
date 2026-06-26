@@ -59,12 +59,20 @@ def _build_principal(profile_id: str, settings: Settings) -> Principal:
 
 
 def _demo_token_for_profile(profile_id: str, settings: Settings) -> str | None:
-    """Return the demo token associated with a profile (mock mode only).
+    """Return the auth token associated with a profile for any app mode.
 
-    Used by the Chainlit ``on_chat_start`` handler to stash the token in
-    the user session so ``on_message`` can send it in the ``X-Demo-Token``
-    header when consuming ``/ask/stream``.
+    In mock mode, returns the demo token (X-Demo-Token header).
+    In real mode, returns the API key (X-API-Key header).
     """
+    if settings.app_mode == "real":
+        key_map = {
+            "admin": settings.api_key_admin,
+            "technician": settings.api_key_technician,
+            "client_101": settings.api_key_client,
+            "client_202": settings.api_key_client,
+        }
+        return key_map.get(profile_id)
+
     token_map = {
         "admin": settings.demo_admin_token,
         "technician": settings.demo_technician_token,
