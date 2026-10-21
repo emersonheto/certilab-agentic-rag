@@ -1,0 +1,42 @@
+# Checks: installs the locked dev dependencies and runs the pytest suite
+# (no real LLM/API calls, no secrets; requires_qdrant/requires_mysql tests skip themselves).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      # future-integrations provides langgraph, imported by app.pipeline at collection time.
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --extra future-integrations
+
+      # Left out because they already fail on origin/main, unrelated to CI:
+      #  - `ruff check .`: 5 errors (unused imports).
+      #  - `mypy app`: 14 strict-mode errors.
+      #  - tests/unit/test_ui_app.py and tests/unit/test_ui_client.py: async tests, but
+      #    pytest-asyncio is not declared in the dev extra.
+      - name: Test
+        run: >-
+          uv run --frozen pytest
+          --ignore=tests/unit/test_ui_app.py
+          --ignore=tests/unit/test_ui_client.py
