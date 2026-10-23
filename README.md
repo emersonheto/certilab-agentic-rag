@@ -280,3 +280,7 @@ uv run pytest
 QDRANT_URL=http://localhost:6333 DB_HOST=127.0.0.1 APP_MODE=real \
   uv run pytest tests/integration/ -v
 ```
+
+## Autor
+
+Desarrollado por [Emerson Herrera Tolentino](https://portfolio.certilab.app), GenAI & RAG Engineer. El caso de estudio está en [Certilab RAG](https://portfolio.certilab.app/case-studies/certilab-rag).
